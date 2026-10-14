@@ -703,3 +703,11 @@ OpenBLAS with the default 22 threads was about 80× slower for the LU.
   conditioning).
 - Each port is a microstrip feed line with a delta gap. Lumped internal
   ports, and multimode (coupled-line) ports, are not implemented.
+
+## License
+
+BSD 3-Clause, see [LICENSE](LICENSE). The optional `triangle` package used by
+`kind="tri"` meshing (and the 3D viewers) is LGPL-3.0 and wraps Shewchuk's
+Triangle, which may not be used in commercial products without the author's
+permission. The openEMS reference scripts in `Engine/tests/data/` import
+openEMS / CSXCAD (GPL-3.0); the `mom25d` package itself does not.
