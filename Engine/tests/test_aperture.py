@@ -62,3 +62,16 @@ def test_dense_equals_hmatrix():
     rd = Solver(m, st, verbose=False, method="dense").sweep([20 * GHz])
     rh = Solver(m, st, verbose=False, method="hmatrix").sweep([20 * GHz])
     assert np.abs(rd.renormalize() - rh.renormalize()).max() < 1e-3
+
+
+def test_view_planes_show_apertures():
+    """view3d draws plane apertures as openings (display mesh area = outline minus aperture)."""
+    from shapely.geometry import box as sbox
+    from mom25d.view3d import _tri_poly
+    import numpy as np
+
+    V, T = _tri_poly(sbox(0, 0, 10, 4), cut=sbox(2, 1.5, 8, 2.5))
+    a = V[T]
+    area = 0.5 * np.abs((a[:, 1, 0] - a[:, 0, 0]) * (a[:, 2, 1] - a[:, 0, 1])
+                        - (a[:, 2, 0] - a[:, 0, 0]) * (a[:, 1, 1] - a[:, 0, 1])).sum()
+    assert abs(area - (40 - 6)) < 1e-6

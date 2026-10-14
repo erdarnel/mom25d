@@ -100,6 +100,7 @@ Bare module names are in `Engine/mom25d/`.
 | `analytic.py` | Hammerstad-Jensen / Kirschning-Jansen / open-end formulas (reference + initial β guess) |
 | `dxf.py` | DXF import (ezdxf): closed polylines with bulges + circles per layer in metres, keyhole-slit cleanup, `outline` (closes seams between touching outline pieces), `split_by_vias` (signal vs stitched ground copper), `header_units` (report only) |
 | `Engine/tests/test_dxf.py` | synthetic DXF (header cm, data mm): bulge arc area, keyhole -> interior ring, signal/ground split, outline seam (~3 s) |
+| `leakage.py` + `templates/leakage.html` | parallel-plate cavity leakage: `cavity_leakage` (per closed section: TEM power per via P_a = 1/2 Re(I_a* Z_TEM I), total, angular pattern, cavity voltage map), `leakage_case` / `leakage_view` (self-contained dark page: map + per-via table + polar + power budget). Lossless transition without stitching: cavity 93-97 % of 1-|S|^2 (rest = top radiation); resolution ~0.1 % P_inc per via (J0(ka) self term). Model: `Models/plane_transition/analysis/leakage_map.py` |
 | `fields.py` | derived fields on display grids: `plane_currents` (image + via-driven + parallel-plate plane currents), `efield` (E on any height), `current_at_quad`, `Grid` |
 | `view3d.py` + `templates/` | generic Plotly HTML viewers for any solved model: `model_view`, `current_view`, `field_view` (cut planes), `sparams_view` (N-port S pages from .sNp / arrays), `wave_cases` |
 | `Engine/tests/test_fields.py` | kernels vs images / interface conditions, -Int E_z = line voltage, ground return current = -strip current, viewers write (~15 s) |
@@ -723,6 +724,35 @@ Units are SI (metres, Hz); `mm`, `GHz` helpers exported. Time convention e^{jωt
     Not done (open): per-piece mesh density (coarse ground band, fine strips — needs a per-piece edge band in
     trimesh); adjoint sensitivities (dS/dp from one transposed solve, using the morph node velocities).
 
+35. **Internal ports: lossless dielectrics, aperture display** (2026-10-14, `solver.py`, `mesh.py`,
+    `view3d.py`; tests `test_internal_ports.py::test_tand_floor_with_internal_ports`,
+    `test_aperture.py::test_view_planes_show_apertures`). From
+    validating gap ports on a uniform GCPW line (0.44 mm line, 0.41 mm gaps, thin sheet over a 205 um eps 3.06
+    stack, 20-38 GHz) against GCPW feed ports:
+    - **Internal ports depend on tan d being exactly 0.** With every dielectric exactly lossless, S11 of the gap-port line was
+      -7.7 dB; tan d 1e-5 gave -15.1 dB and the real 0.004 gave -15.2 dB (continuous), and the lossless results
+      were non-passive at some frequencies. Feed ports did not change. Copper loss alone (sigma, tan d 0) did not
+      help, so it is the dielectric (real-axis poles of the layered kernels), not the conductor. Root cause not
+      found: the Woodbury load and a direct (Z + L D L^T) solve gave identical S. NOT a universal fix: with tan d
+      1e-5 `test_via_port` turned non-passive (row sums of |S|^2 up to 1.066, |S33| 1.03), so the internal-port
+      result depends on the kernel path (exactly lossless or not) in both directions. `Solver(tand_floor=1e-5)`
+      is therefore opt-in (default None: unchanged); `Solver.lossless` keeps the user's value for the feed fit.
+      Validate internal ports on a uniform line for the stack in use. Open: find the cause.
+    - Bridges that only touch the copper edges are fine: a gap port whose bridge ends exactly on the line end /
+      pad edge gave the same S as one reaching 40 um into the copper (tri: identical; grid: within 0.2 dB at
+      20 GHz), so no overlap is needed (a suspicion during the investigation, checked and dropped).
+    - **Ground terminal of a gap port.** On the uniform line a gap port to a separate pad stitched to the ground
+      plane, or to the coplanar pour across a slot at the line end with a >= 2 mm ground band, was passive and
+      symmetric (|S11|-|S22| < 0.02, missing power within ~1 % of feeds). A narrow (0.95 mm) truncated ground band
+      left one-via ground fragments that resonate (a 1.6 mm, one-via piece: a quarter-wave stub at 29 GHz) and
+      made results look like port failures. Gap ports still carry the bridge/slot parasitics (S11 -10..-18 dB on
+      a matched line): de-embed with straight reference lines (two lengths, reciprocal error box per frequency).
+    - **Gap ports with an aperture ground plane did not work**: a line in an opening of an inner plane, port
+      bridged to a patch stitched to the plane by short vias, gave invalid S even on a uniform line (70-85 %
+      missing power lossy). Not resolved; see open items.
+    - `view3d`: plane apertures are now cut out of the displayed planes (`_tri_poly(cut=...)`); before, planes were
+      drawn solid and traces over an aperture looked as if they ran over metal.
+
 ## Validation baseline (keep these numbers when changing things)
 
 - εr=1 slab vs images: < 1e-6 (relative to 1/4πR), 1–30 GHz.
@@ -837,6 +867,19 @@ reference cases (e.g. coupled lines) before trusting new features.
   structure type vs openEMS with mesh convergence.
 
 ## Open items / next steps
+
+**From 2026-10-14 (internal ports / aperture models, decision 35):**
+- Root cause of the tan d = 0 internal-port error (kernel path for real-axis poles near the gap).
+- A port for a line in a plane aperture (CPW over an infinite plane): e.g. a slot port (magnetic-current delta
+  source across the aperture between line and plane), or allow a meshed sheet on the same level as a plane
+  (today it needs a thin spacer layer).
+- A coplanar-mode gap port (line against both side grounds at once, like the feed's CoplanarGround).
+- `current_view` was very slow / unresponsive on a ~2 k-unknown aperture model in Chrome and its plane layers did
+  not show; `fields.plane_currents` ignores aperture fields (image of the sheet currents only) -- for aperture
+  models take the plane current from n x H including M.
+- Thin-sheet effective width (edge expansion / Hammerstad dW) as an option, instead of hand-tuned edge offsets.
+- `Solver(method="auto")` may pick the H-matrix method; `memory_estimate()` then returns None (callers that
+  print it need `method="dense"`).
 
 **Proposed 2026-10-05 (from the first DXF board model):**
 - `Stackup(bottom="air")`: an open bottom section (mirror of the top one),

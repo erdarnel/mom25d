@@ -53,28 +53,38 @@ def wave_cases(res, fis=None, z0=50.0):
     return out
 
 
-def _tri_poly(poly, holes=(), dmax=None):
-    """Triangulate a shapely polygon minus circular holes [(xy, r)] (all in
-    mm) for display; dmax: largest edge (refined, for interpolated colours)."""
+def _tri_poly(poly, holes=(), dmax=None, cut=None):
+    """Triangulate a shapely polygon minus circular holes [(xy, r)] and minus
+    `cut` (any shapely geometry, e.g. plane apertures) (all in mm) for display;
+    dmax: largest edge (refined, for interpolated colours). Every remaining
+    piece is triangulated (an aperture may split the plane)."""
     import shapely
     import triangle
     from shapely.geometry import Point
 
     hp = [Point(xy).buffer(r, quad_segs=16) for xy, r in holes]
     g = poly.difference(shapely.union_all(hp)) if hp else poly
-    g = max(getattr(g, "geoms", [g]), key=lambda q: q.area)
-    V, S, H = [], [], []
-    for ring in [g.exterior, *g.interiors]:
-        c = np.asarray(ring.coords)[:-1]
-        n0 = len(V)
-        V += c.tolist()
-        S += [(n0 + i, n0 + (i + 1) % len(c)) for i in range(len(c))]
-    H = [list(shapely.Polygon(r).representative_point().coords[0]) for r in g.interiors]
-    d = dict(vertices=np.array(V), segments=np.array(S))
-    if H:
-        d["holes"] = np.array(H)
-    t = triangle.triangulate(d, f"pq30a{0.5 * dmax**2:.5f}Q" if dmax else "pQ")
-    return t["vertices"], t["triangles"]
+    if cut is not None and not cut.is_empty:
+        g = g.difference(cut)
+    pieces = [q for q in getattr(g, "geoms", [g]) if q.geom_type == "Polygon" and q.area > 1e-9 * max(poly.area, 1e-12)]
+    if cut is None:                      # unchanged behaviour without apertures: the largest piece
+        pieces = [max(pieces, key=lambda q: q.area)]
+    Vall, Tall = [], []
+    for q in pieces:
+        V, S = [], []
+        for ring in [q.exterior, *q.interiors]:
+            c = np.asarray(ring.coords)[:-1]
+            n0 = len(V)
+            V += c.tolist()
+            S += [(n0 + i, n0 + (i + 1) % len(c)) for i in range(len(c))]
+        H = [list(shapely.Polygon(r).representative_point().coords[0]) for r in q.interiors]
+        d = dict(vertices=np.array(V), segments=np.array(S))
+        if H:
+            d["holes"] = np.array(H)
+        t = triangle.triangulate(d, f"pq30a{0.5 * dmax**2:.5f}Q" if dmax else "pQ")
+        Tall.append(t["triangles"] + sum(len(v) for v in Vall))
+        Vall.append(t["vertices"])
+    return np.vstack(Vall), np.vstack(Tall)
 
 
 def _enc(v, vmax, floor):
@@ -169,16 +179,28 @@ class Scene:
             holes.setdefault(p, []).append((tuple(np.asarray(xy) / MM), b / MM))
         self.plane_names = [n for n in sorted(st.planes, key=st.level_z)]
         self.planes, self.plane_nodes, self.pmeshes = [], {}, []
+        # plane apertures (Layout.add_aperture) are cut out of the displayed planes (before 2026-10-14 the planes
+        # were drawn solid, so traces over an aperture looked as if they ran over metal)
+        apert = {}
+        try:
+            import shapely
+            from shapely import affinity
+            for lo, hi, region, *_ in getattr(m.layout, "apertures", []):
+                r_mm = affinity.scale(region, 1 / MM, 1 / MM, origin=(0, 0))
+                for n in {lo, hi}:
+                    apert[n] = r_mm if n not in apert else shapely.union_all([apert[n], r_mm])
+        except Exception:
+            apert = {}
         cache = {}
         for n in self.plane_names:  # planes with the same holes share one display mesh
-            key = tuple(holes.get(n, []))
+            key = (tuple(holes.get(n, [])), id(apert.get(n)))
             if key not in cache:
-                V, T = _tri_poly(self.outline, key, plane_dmax)
+                V, T = _tri_poly(self.outline, key[0], plane_dmax, cut=apert.get(n))
                 cache[key] = (len(self.pmeshes), V)
                 self.pmeshes.append(dict(nodes=np.round(V, 4).tolist(), tris=T.tolist()))
             k, V = cache[key]
             self.plane_nodes[n] = V
-            self.planes.append(dict(name=n, z=self.zd(st.level_z(n)), holes=[[list(h[0]), h[1]] for h in key], mesh=k))
+            self.planes.append(dict(name=n, z=self.zd(st.level_z(n)), holes=[[list(h[0]), h[1]] for h in key[0]], mesh=k))
         Vb, Tb = _tri_poly(self.outline)
         zd = [self.zd(z) for z, d0, d1 in self._dielectric_spans()]
         self.board = dict(nodes=np.round(Vb, 4).tolist(), tris=Tb.tolist(),

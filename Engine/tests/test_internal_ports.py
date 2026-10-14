@@ -120,3 +120,32 @@ def test_per_plane_antipad():
     assert len(m.frills) == 0
     with pytest.raises(ValueError):
         transition({"L2": 0.2 * mm})
+
+
+def _line_with_pad_ports(bridge_in):
+    """Line with a grounded pad beyond each end and gap ports line end -> pad; bridge_in: how far each bridge end
+    reaches into the copper (0: the ends only touch the copper edges)."""
+    lay = Layout()
+    lay.add_rect(-3 * mm, -W / 2, 3 * mm, W / 2)
+    for sx, name in ((-1, "A"), (1, "B")):
+        xe, xp0, xp1 = sx * 3 * mm, sx * 3.3 * mm, sx * 3.6 * mm
+        lay.add_rect(min(xp0, xp1), -0.15 * mm, max(xp0, xp1), 0.15 * mm)
+        lay.add_via(sx * 3.45 * mm, 0, drill=0.15 * mm, pad=0.2 * mm)
+        lay.add_gap_port(name, (xe - sx * bridge_in, 0), (xp0 + sx * bridge_in, 0), 0.2 * mm)
+    return lay
+
+
+def test_tand_floor_with_internal_ports():
+    """Opt-in tand_floor: with internal ports and every dielectric lossless the solver applies it and warns; the
+    result equals an explicit tan d 1e-5 run; the default (None) keeps tan d = 0."""
+    f = [10 * GHz]
+    lay = _line_with_pad_ports(0.04 * mm)
+    m = lay.mesh(0.25 * mm, 0.05 * mm)
+    with pytest.warns(UserWarning, match="tand_floor"):
+        s0 = Solver(m, Substrate(ER, H), verbose=False, tand_floor=1e-5)
+    assert all(d.tand == pytest.approx(1e-5) for d in s0.stack.layers) and s0.lossless
+    S0 = s0.sweep(f, interp=None).S
+    S1 = Solver(m, Substrate(ER, H, tand=1e-5), verbose=False).sweep(f, interp=None).S
+    assert np.allclose(S0, S1, atol=1e-6)
+    s2 = Solver(m, Substrate(ER, H), verbose=False)
+    assert all(d.tand == 0 for d in s2.stack.layers)

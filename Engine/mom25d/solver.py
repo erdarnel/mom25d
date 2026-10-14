@@ -720,7 +720,7 @@ class SweepResult:
 
 class Solver:
     def __init__(self, mesh, substrate, z0=None, verbose=True, method="auto", v_weight=None,
-                 z0_recip_min=None):
+                 z0_recip_min=None, tand_floor=None):
         """mesh      : Mesh built from a Layout with ports
         substrate : Substrate (one dielectric, copper on "top") or Stackup
                     (any number of layers; every mesh layer must be one of its
@@ -744,12 +744,31 @@ class Solver:
                     override good line-voltage estimates: a 79-ohm port came
                     out at 90-116 ohm from couplings |SI| <= 0.2 that were
                     non-reciprocal by up to 0.28. Set it between the weak and
-                    the strong couplings (0.3 there)."""
+                    the strong couplings (0.3 there).
+        tand_floor : opt-in (default None): loss tangent given to every
+                    dielectric when ALL of them are lossless and the layout
+                    has lumped gaps or internal ports. Internal-port results
+                    depend on whether tan d is exactly 0 (decision 35): a
+                    gap-port line was wrong at 0 and right at 1e-5, but the
+                    via-port test turned non-passive at 1e-5 -- validate on a
+                    uniform line before relying on either."""
         from .layered import Stackup
 
         self.mesh = mesh
         self.sub = substrate
         self.stack = substrate if isinstance(substrate, Stackup) else substrate.to_stackup()
+        self._lossless_input = self.stack.lossless
+        lay = mesh.layout
+        if (tand_floor and (getattr(lay, "lumped", None) or getattr(lay, "internal_ports", None))
+                and not any(d.tand for d in self.stack.layers)):
+            # internal-port S depends on tan d being exactly 0 (decision 35); opt-in floor, see the docstring
+            import dataclasses
+            import warnings
+
+            self.stack = dataclasses.replace(self.stack, layers=[dataclasses.replace(d, tand=tand_floor)
+                                                                 for d in self.stack.layers])
+            warnings.warn(f"all dielectrics lossless with lumped gaps / internal ports: tan d set to {tand_floor:g} "
+                          "(tand_floor)", stacklevel=2)
         st = self.stack
         missing = [n for n in mesh.layer_names if n not in st.metals]
         if missing:
@@ -832,7 +851,7 @@ class Solver:
 
     @property
     def lossless(self):
-        return self.stack.lossless
+        return self._lossless_input        # as given (a tand_floor does not change the feed-fit constraint)
 
     def surface_impedance(self, freq):
         return self.stack.surface_impedance(freq)
