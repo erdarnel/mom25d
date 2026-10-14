@@ -1,0 +1,116 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>mom25d S-parameters</title>
+<style>
+:root {
+  --surface: #fcfcfb; --bg: #f3f4f1; --fg: #1d2420; --muted: #5d675f; --rule: #e1e4de; --axis: #c9cec6;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --ref: #1d2420; --band: rgba(29, 36, 32, 0.06); --focus: #2a78d6;
+  --f-body: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; --f-mono: Consolas, ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --surface: #1a1a19; --bg: #121211; --fg: #e6e6e3; --muted: #a3a39e; --rule: #2c2c2a; --axis: #3a3a37;
+          --s1: #3987e5; --s2: #d95926; --s3: #199e70; --ref: #e6e6e3; --band: rgba(230, 230, 227, 0.06); color-scheme: dark; }
+}
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--f-body); }
+.wrap { max-width: 1500px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+h1 { font-size: 1.35rem; margin: 0; } .sub { color: var(--muted); margin: 2px 0 0; max-width: 120ch; }
+.filters { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+.filters .lab { color: var(--muted); font-size: 0.76rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-right: 6px; }
+.seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 5px; overflow: hidden; vertical-align: middle; }
+.seg button { font: 600 0.85rem var(--f-body); padding: 5px 10px; background: transparent; color: var(--fg); border: 0; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--axis); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--surface); }
+button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 8px 2px; min-width: 0; }
+.card h2 { font-size: 0.95rem; margin: 2px 6px 0; font-weight: 600; }
+.card .p { height: 270px; }
+.legend { display: flex; flex-wrap: wrap; gap: 18px; color: var(--fg); font-size: 0.88rem; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { display: inline-block; width: 22px; height: 0; border-top: 2px solid; }
+.note { color: var(--muted); font-size: 0.82rem; margin: 0; max-width: 140ch; }
+details { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 12px; }
+table { border-collapse: collapse; font-size: 0.82rem; margin-top: 8px; }
+th, td { padding: 2px 8px; text-align: right; font-family: var(--f-mono); border-bottom: 1px solid var(--rule); }
+th { color: var(--muted); font-family: var(--f-body); font-weight: 600; }
+#err { color: var(--s2); }
+@media (max-width: 1000px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+</style>
+<div class="wrap">
+  <header>
+    <h1 id="title"></h1>
+    <p class="sub" id="subtitle"></p>
+  </header>
+  <div class="filters">
+    <span><span class="lab">Show</span><span class="seg" id="qsel" role="group" aria-label="Quantity">
+      <button aria-pressed="true" data-v="db">|S| dB</button><button aria-pressed="false" data-v="ph">Phase</button></span></span>
+    <span><span class="lab">Set</span><span class="seg" id="ssel" role="group" aria-label="Parameter set">
+      <button aria-pressed="true" data-v="key" id="bkey">Key</button><button aria-pressed="false" data-v="all" id="ball">All</button></span></span>
+  </div>
+  <div class="legend" id="legend"></div>
+  <div class="grid" id="grid"></div>
+  <div id="notes"></div>
+  <details><summary id="tsum">Table view (dB)</summary><div id="tbl"></div></details>
+  <p class="note" id="err" hidden></p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<script>
+const D = __DATA__;
+const $ = (id) => document.getElementById(id);
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const N = D.n, P = D.ports;
+const ALL = []; for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) ALL.push([i, j]);
+const KEY = D.key || ALL.filter(([i, j]) => i === j || j < i);
+const NAMES = Object.fromEntries(ALL.map(([i, j]) => [i + "," + j, (D.names || {})[i + "," + j] || (i === j ? `${P[i]} reflection` : `${P[j]} → ${P[i]}`)]));
+$("title").innerHTML = D.title; $("subtitle").innerHTML = D.subtitle;
+$("notes").innerHTML = D.notes.map(n => `<p class="note">${n}</p>`).join("");
+$("bkey").textContent = `Key ${KEY.length}`; $("ball").textContent = `All ${ALL.length}`;
+const FR = [Math.min(...D.series.map(s => s.f[0])), Math.max(...D.series.map(s => s.f[s.f.length - 1]))];
+let q = "db", set = "key";
+// colour follows the series: MoM 2.5D runs take categorical slots in order, the reference is ink, dashed
+const colorOf = (s, k) => s.kind === "ref" ? css("--ref") : css(["--s1", "--s2", "--s3"][k] || "--s3");
+function legend() {
+  let k = 0;
+  $("legend").innerHTML = D.series.map(s => { const c = colorOf(s, s.kind === "ref" ? 0 : k++);
+    return `<span><i style="border-top-color:${c};border-top-style:${s.kind === "ref" ? "dashed" : "solid"}"></i>${s.name}</span>`; }).join("");
+}
+function plots() {
+  const pairs = set === "key" ? KEY : ALL;
+  $("grid").innerHTML = pairs.map(([i, j]) => `<div class="card"><h2>S${i + 1}${j + 1} · ${NAMES[i + "," + j]}</h2><div class="p" id="p${i}${j}"></div></div>`).join("");
+  for (const [i, j] of pairs) {
+    let k = 0;
+    const tr = D.series.map(s => { const c = colorOf(s, s.kind === "ref" ? 0 : k++);
+      return { x: s.f, y: s[q][i * N + j], name: s.name, mode: "lines", type: "scatter",
+        line: { color: c, width: 2, dash: s.kind === "ref" ? "dash" : "solid" },
+        hovertemplate: `%{y:.2f} ${q === "db" ? "dB" : "°"}<extra>${s.name}</extra>` }; });
+    const ax = { gridcolor: css("--rule"), linecolor: css("--axis"), zerolinecolor: css("--rule"), tickfont: { color: css("--muted"), size: 11 } };
+    Plotly.react("p" + i + j, tr, {
+      paper_bgcolor: css("--surface"), plot_bgcolor: css("--surface"), font: { family: "Segoe UI, sans-serif", color: css("--fg") },
+      margin: { l: 46, r: 10, t: 6, b: 34 }, showlegend: false, hovermode: "x unified",
+      hoverlabel: { bgcolor: css("--surface"), bordercolor: css("--axis"), font: { color: css("--fg") } },
+      xaxis: { ...ax, title: { text: "GHz", font: { size: 11, color: css("--muted") } }, range: FR, showspikes: true, spikemode: "across", spikecolor: css("--axis"), spikethickness: 1, spikedash: "solid" },
+      yaxis: { ...ax, title: { text: q === "db" ? "dB" : "deg", font: { size: 11, color: css("--muted") } }, ...(q === "ph" ? { range: [-185, 185], dtick: 90 } : {}) },
+      shapes: D.band ? [{ type: "rect", xref: "x", yref: "paper", x0: D.band[0], x1: D.band[1], y0: 0, y1: 1, fillcolor: css("--band"), line: { width: 0 }, layer: "below" }] : [],
+    }, { responsive: true, displaylogo: false, modeBarButtonsToRemove: ["lasso2d", "select2d"] });
+  }
+}
+function table() {
+  const fs = D.band ? [D.band[0], (D.band[0] + D.band[1]) / 2, D.band[1]] : [FR[0], (FR[0] + FR[1]) / 2, FR[1]], pairs = KEY;
+  $("tsum").textContent = `Table view (${D.band ? "band edges and centre" : "start, centre, stop"}, dB)`;
+  const at = (s, idx, f) => { let b = 0; for (let n = 1; n < s.f.length; n++) if (Math.abs(s.f[n] - f) < Math.abs(s.f[b] - f)) b = n; return [s.f[b], s.db[idx][b]]; };
+  let h = `<table><tr><th>series</th><th>f (GHz)</th>${pairs.map(([i, j]) => `<th>S${i + 1}${j + 1}</th>`).join("")}</tr>`;
+  for (const s of D.series) for (const f of fs) {
+    const row = pairs.map(([i, j]) => at(s, i * N + j, f));
+    h += `<tr><th style="text-align:left">${s.name}</th><td>${row[0][0].toFixed(2)}</td>${row.map(r => `<td>${r[1].toFixed(2)}</td>`).join("")}</tr>`;
+  }
+  $("tbl").innerHTML = h + "</table>";
+}
+function seg(id, cb) { $(id).querySelectorAll("button").forEach(b => b.onclick = () => {
+  $(id).querySelectorAll("button").forEach(c => c.setAttribute("aria-pressed", String(c === b))); cb(b.dataset.v); }); }
+if (typeof Plotly === "undefined") { $("err").hidden = false; $("err").textContent = "Plotly did not load (cdn.jsdelivr.net blocked?)."; }
+else {
+  legend(); plots(); table();
+  seg("qsel", v => { q = v; plots(); }); seg("ssel", v => { set = v; plots(); });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { legend(); plots(); });
+}
+</script>

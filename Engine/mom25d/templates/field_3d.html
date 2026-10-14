@@ -1,0 +1,218 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>mom25d electric field</title>
+<style>
+:root {
+  --bg: #f3f4f1; --panel: #fbfbf9; --fg: #1d2420; --muted: #5d675f; --rule: #d5d9d2;
+  --port: #c0392b; --plane: #6f7f9a; --focus: #2a78d6; --cut: #2a78d6;
+  --f-body: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --f-mono: Consolas, "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #141917; --panel: #1b211e; --fg: #e3e8e2; --muted: #9aa69c; --rule: #2e3732;
+          --port: #ff6b5c; --plane: #8796b3; color-scheme: dark; }
+}
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--f-body); }
+.wrap { padding: 14px 16px 20px; max-width: 1800px; margin: 0 auto; display: grid; gap: 12px; }
+h1 { font-size: 1.4rem; margin: 0; }
+.sub { color: var(--muted); margin: 2px 0 0; max-width: 130ch; }
+.filters { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.filters label { color: var(--muted); font-size: 0.8rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-right: 6px; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 5px; overflow: hidden; vertical-align: middle; }
+.seg button { font: 600 0.85rem var(--f-body); padding: 5px 10px; background: transparent; color: var(--fg); border: 0; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.cutbar { display: grid; grid-template-columns: auto auto minmax(200px, 1fr) auto; gap: 12px; align-items: center; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 12px; }
+.cutbar input { width: 100%; }
+.mono { font-family: var(--f-mono); font-size: 0.9rem; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 260px; gap: 12px; align-items: start; }
+.panel { height: min(74vh, 820px); min-height: 420px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; }
+aside { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; display: grid; gap: 14px; max-height: min(74vh, 820px); overflow-y: auto; overflow-x: hidden; }
+.lbl { font-weight: 600; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.chk { display: flex; gap: 7px; align-items: center; cursor: pointer; }
+.row { display: flex; justify-content: space-between; } input[type="range"] { width: 100%; }
+.note { color: var(--muted); font-size: 0.8rem; margin: 0; }
+#err { color: var(--port); }
+@media (max-width: 1200px) { .main { grid-template-columns: minmax(0, 1fr); } aside { max-height: none; } }
+</style>
+
+<div class="wrap">
+  <header><h1 id="title"></h1><p class="sub" id="subtitle"></p></header>
+  <div class="filters">
+    <span><label>Frequency</label><span class="seg" id="fsel" role="group" aria-label="Frequency"></span></span>
+    <span><label>Driven port</label><span class="seg" id="psel" role="group" aria-label="Driven port"></span></span>
+  </div>
+  <div class="cutbar">
+    <span class="lbl" style="margin:0">Cut plane</span>
+    <span class="seg" id="axsel" role="group" aria-label="Cut normal"><button data-v="x">x</button><button data-v="y">y</button><button data-v="z">z</button></span>
+    <input type="range" id="pos" min="0" max="10" step="1" value="0" aria-label="Cut position">
+    <span class="mono" id="posv"></span>
+  </div>
+  <div class="main">
+    <div id="p3d" class="panel" role="img" aria-label="3D view with the cut plane"></div>
+    <div id="p2d" class="panel" role="img" aria-label="Field map on the cut plane"></div>
+    <aside>
+      <div><div class="lbl">Show (3D)</div><div id="chk"></div></div>
+      <div><div class="row"><span class="lbl">Colour range</span><span class="mono" id="rngv"></span></div>
+        <input type="range" id="rng" min="10" max="80" step="5" value="60" aria-label="dB range"></div>
+      <div><div class="row"><span class="lbl">Z exaggeration</span><span class="mono" id="zsv"></span></div>
+        <input type="range" id="zs" min="1" max="10" step="1" value="4" aria-label="Z exaggeration"></div>
+      <div><div class="lbl">Case</div><div class="mono" id="case"></div></div>
+      <div id="notes"></div>
+      <p class="note" id="err" hidden></p>
+    </aside>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<script>
+const D = __DATA__;
+const $ = (id) => document.getElementById(id);
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const dark = () => window.matchMedia("(prefers-color-scheme: dark)").matches;
+// sequential ramp, light (weak) -> dark (strong); reversed in dark mode
+const RAMP = ["#fdf0d5", "#f9d08b", "#f2a65a", "#e2733c", "#c44b2b", "#93331f", "#5e1f14"];
+const cscale = () => { const r = dark() ? [...RAMP].reverse() : RAMP; return r.map((c, i) => [i / (r.length - 1), c]); };
+$("title").innerHTML = D.title; $("subtitle").innerHTML = D.subtitle;
+$("notes").innerHTML = D.notes.map(n => `<p class="note">${n}</p>`).join("");
+const G = D.grid, NX = G.x.length, NY = G.y.length, NZ = G.z.length;
+let zs = 4, range = Math.min(60, D.floor), axis = "z", pos = 0;
+$("rng").max = D.floor; $("rng").value = range;
+const freqs = [...new Set(D.cases.map(c => c.f))], ports = D.ports_list;
+let fsel = freqs[Math.floor(freqs.length / 2)], psel = ports[0];
+const cache = new Map();
+function vol() {  // dB volume of the current case, Float32 (NaN = no data)
+  const key = fsel + "|" + psel;
+  if (!cache.has(key)) {
+    const C = D.cases.find(c => c.f === fsel && c.port === psel), b = atob(C.E), a = new Float32Array(b.length);
+    for (let i = 0; i < b.length; i++) { const c = b.charCodeAt(i); a[i] = c === 255 ? NaN : c / 250 * D.floor - D.floor; }
+    cache.set(key, { a, C });
+  }
+  return cache.get(key);
+}
+const at = (a, i, j, k) => a[(k * NY + j) * NX + i];
+const fmtV = (db, vmax) => { const v = vmax * Math.pow(10, db / 20); return v >= 1e3 ? (v / 1e3).toPrecision(3) + " kV/m" : v.toPrecision(3) + " V/m"; };
+const n = () => (axis === "x" ? NX : axis === "y" ? NY : NZ);
+const coord = () => (axis === "x" ? G.x : axis === "y" ? G.y : G.z)[pos];
+function slice() {  // 2D array rows x cols + axes
+  const { a } = vol();
+  if (axis === "z") return { u: G.x, v: G.y, M: G.y.map((_, j) => G.x.map((_, i) => at(a, i, j, pos))), lu: "x [mm]", lv: "y [mm]" };
+  if (axis === "x") return { u: G.y, v: G.z, M: G.z.map((_, k) => G.y.map((_, j) => at(a, pos, j, k))), lu: "y [mm]", lv: "z [mm]" };
+  return { u: G.x, v: G.z, M: G.z.map((_, k) => G.x.map((_, i) => at(a, i, pos, k))), lu: "x [mm]", lv: "z [mm]" };
+}
+const fams = Object.keys(D.edges);
+const chks = fams.map(f => [`t-${f}`, `${f} copper outline`, true]).concat([["t-planes", "Planes", true], ["t-ports", "Port labels", true]]);
+$("chk").innerHTML = chks.map(([id, lab, on]) => `<label class="chk"><input type="checkbox" id="${id}" ${on ? "checked" : ""}> ${lab}</label>`).join("");
+const zmid = (D.zrange[0] + D.zrange[1]) / 2;
+const [x0, x1, y0, y1] = D.bounds, W = x1 - x0;
+const zlo = Math.min(G.z[0], D.zrange[0]), zhi = Math.max(G.z[NZ - 1], D.zrange[1]);
+
+function lines(seg, z) {
+  const x = [], y = [], zz = [];
+  for (const [xa, ya, xb, yb] of seg) { x.push(xa, xb, null); y.push(ya, yb, null); zz.push(z * zs, z * zs, null); }
+  return { x, y, z: zz };
+}
+const IDX = {};
+function traces3d() {
+  const { C } = vol(), t = [], add = (name, tr) => { (IDX[name] = IDX[name] || []).push(t.length); t.push(tr); };
+  for (const f of fams) { const E = D.edges[f]; add("e_" + f, { type: "scatter3d", mode: "lines", ...lines(E.seg, E.z), line: { color: E.color, width: 3 }, hoverinfo: "skip" }); }
+  for (const P of D.planes) {
+    const c = [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]], ax = c.map(p => p[0]), ay = c.map(p => p[1]), az = c.map(() => P.z * zs);
+    for (const [xy, r] of P.holes) { ax.push(null); ay.push(null); az.push(null); for (let s = 0; s <= 32; s++) { const a = 2 * Math.PI * s / 32; ax.push(xy[0] + r * Math.cos(a)); ay.push(xy[1] + r * Math.sin(a)); az.push(P.z * zs); } }
+    add("planes", { type: "scatter3d", mode: "lines", x: ax, y: ay, z: az, line: { color: css("--plane"), width: 2 }, hovertemplate: `plane ${P.name}<extra></extra>` });
+  }
+  const S = slice(), text = S.M.map(r => r.map(d => Number.isNaN(d) ? "" : `${d.toFixed(1)} dB<br>${fmtV(d, C.vmax)}`));
+  let X, Y, Z;
+  if (axis === "z") { X = S.M.map(() => G.x); Y = G.y.map(y => G.x.map(() => y)); Z = S.M.map(r => r.map(() => coord() * zs)); }
+  else if (axis === "x") { X = S.M.map(r => r.map(() => coord())); Y = S.M.map(() => G.y); Z = G.z.map(z => G.y.map(() => z * zs)); }
+  else { X = S.M.map(() => G.x); Y = S.M.map(r => r.map(() => coord())); Z = G.z.map(z => G.x.map(() => z * zs)); }
+  add("cut", { type: "surface", x: X, y: Y, z: Z, surfacecolor: S.M, colorscale: cscale(), cmin: -range, cmax: 0, showscale: false,
+    text, hovertemplate: "%{text}<extra></extra>", lighting: { ambient: 1, diffuse: 0, specular: 0 }, opacity: 1 });
+  add("ports", { type: "scatter3d", mode: "text", x: D.ports.map(p => p.ref[0]), y: D.ports.map(p => p.ref[1]),
+    z: D.ports.map(p => (p.z + (p.z >= zmid ? 0.35 : -0.35)) * zs), text: D.ports.map(p => p.name),
+    textfont: { family: "Consolas, monospace", size: 12, color: css("--port") }, hoverinfo: "skip" });
+  return t;
+}
+function layout3d(camera) {
+  const ax = (title) => ({ title: { text: title, font: { size: 12, color: css("--muted") } }, color: css("--muted"),
+    gridcolor: css("--rule"), zerolinecolor: css("--rule"), showbackground: false, showspikes: false });
+  const zr = (zhi - zlo) * zs, zc = (zhi + zlo) / 2 * zs;
+  return { paper_bgcolor: css("--panel"), font: { color: css("--fg") }, margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, uirevision: "keep",
+    scene: { aspectmode: "manual", aspectratio: { x: 1, y: (y1 - y0) / W, z: zr / W },
+      xaxis: { ...ax("x [mm]"), range: [x0, x1] }, yaxis: { ...ax("y [mm]"), range: [y0, y1] },
+      zaxis: { ...ax(`z ×${zs}`), range: [zc - zr * 0.6, zc + zr * 0.6], showticklabels: false },
+      camera: camera || { eye: { x: -0.55, y: -0.95, z: 0.6 }, center: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } } } };
+}
+function draw2d() {
+  const { C } = vol(), S = slice();
+  const t = [{ type: "heatmap", x: S.u, y: S.v, z: S.M, colorscale: cscale(), zmin: -range, zmax: 0, zsmooth: "best",
+    text: S.M.map(r => r.map(d => Number.isNaN(d) ? "" : fmtV(d, C.vmax))), hovertemplate: `${S.lu.split(" ")[0]} %{x:.3f}, ${S.lv.split(" ")[0]} %{y:.3f} mm<br>%{z:.1f} dB · %{text}<extra></extra>`,
+    colorbar: { title: { text: "dB re max", side: "right" }, thickness: 12, len: 0.8, tickfont: { color: css("--muted") } } }];
+  if (axis === "z") {
+    for (const f of fams) {  // copper outlines; layers away from the cut are faint
+      const E = D.edges[f], x = [], y = [];
+      for (const [xa, ya, xb, yb] of E.seg) { x.push(xa, xb, null); y.push(ya, yb, null); }
+      const near = Math.abs(E.z - coord()) < 0.3;
+      t.push({ type: "scatter", mode: "lines", x, y, line: { color: E.color, width: near ? 1.6 : 0.7 }, opacity: near ? 1 : 0.35, hoverinfo: "skip" });
+    }
+  } else {
+    const lev = Object.values(D.edges).map(E => [E.z, E.color]).concat(D.planes.map(P => [P.z, css("--plane")]));
+    for (const [z, col] of lev) t.push({ type: "scatter", mode: "lines", x: [S.u[0], S.u[S.u.length - 1]], y: [z, z], line: { color: col, width: 1, dash: "dot" }, hoverinfo: "skip" });
+  }
+  const ax = (title) => ({ title: { text: title, font: { size: 12, color: css("--muted") } }, color: css("--muted"), gridcolor: css("--rule"), zeroline: false, showspikes: false });
+  const lay = { paper_bgcolor: css("--panel"), plot_bgcolor: css("--panel"), font: { color: css("--fg") }, margin: { l: 60, r: 10, t: 30, b: 50 }, showlegend: false,
+    title: { text: `|E|, ${axis} = ${coord().toFixed(3)} mm`, font: { size: 13 } },
+    xaxis: { ...ax(S.lu), range: [S.u[0], S.u[S.u.length - 1]] },
+    yaxis: { ...ax(axis === "z" ? S.lv : `${S.lv} (×${zs})`), range: [S.v[0], S.v[S.v.length - 1]], scaleanchor: "x", scaleratio: axis === "z" ? 1 : zs } };
+  Plotly.react("p2d", t, lay, { responsive: true, displaylogo: false });
+}
+const groups = Object.fromEntries(fams.map(f => [`t-${f}`, ["e_" + f]]));
+Object.assign(groups, { "t-planes": ["planes"], "t-ports": ["ports"] });
+function vis() { for (const [id, keys] of Object.entries(groups)) for (const k of keys) if (IDX[k]) Plotly.restyle("p3d", { visible: $(id).checked }, IDX[k]); }
+const curCam = () => $("p3d")._fullLayout?.scene?.camera;
+function info() {
+  const { C } = vol();
+  $("posv").textContent = `${axis} = ${coord().toFixed(3)} mm`;
+  $("case").innerHTML = `${fsel} GHz, ${psel} driven<br>max |E| ${fmtV(0, C.vmax)}`;
+}
+function draw(camera) { for (const k in IDX) delete IDX[k]; Plotly.react("p3d", traces3d(), layout3d(camera), { responsive: true, displaylogo: false }); vis(); draw2d(); info(); }
+function setAxis(a, keep) {
+  axis = a;
+  document.querySelectorAll("#axsel button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === a)));
+  $("pos").max = n() - 1;
+  if (!keep) {  // start where the field is strongest along this axis
+    const { a: v } = vol(); let best = -1e9, bi = 0;
+    for (let p = 0; p < n(); p++) {
+      let m = -1e9;
+      if (a === "z") { for (let j = 0; j < NY; j += 2) for (let i = 0; i < NX; i += 2) { const d = at(v, i, j, p); if (d > m) m = d; } }
+      else if (a === "x") { for (let k = 0; k < NZ; k++) for (let j = 0; j < NY; j += 2) { const d = at(v, p, j, k); if (d > m) m = d; } }
+      else { for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i += 2) { const d = at(v, i, p, k); if (d > m) m = d; } }
+      if (m > best) { best = m; bi = p; }
+    }
+    pos = bi;
+  }
+  $("pos").value = pos;
+}
+function seg(el, items, cur, fmt, onpick) {
+  el.innerHTML = items.map(v => `<button aria-pressed="${v === cur}" data-v="${v}">${fmt(v)}</button>`).join("");
+  el.querySelectorAll("button").forEach(b => b.onclick = () => {
+    el.querySelectorAll("button").forEach(c => c.setAttribute("aria-pressed", String(c === b))); onpick(b.dataset.v); });
+}
+if (typeof Plotly === "undefined") {
+  $("err").hidden = false; $("err").textContent = "Plotly did not load (cdn.jsdelivr.net blocked?). Reload to try again.";
+} else {
+  seg($("fsel"), freqs, fsel, v => `${v} GHz`, v => { fsel = +v; draw(curCam()); });
+  seg($("psel"), ports, psel, v => v, v => { psel = v; draw(curCam()); });
+  document.querySelectorAll("#axsel button").forEach(b => b.onclick = () => { setAxis(b.dataset.v); draw(curCam()); });
+  $("zsv").textContent = zs + "×"; $("rngv").textContent = range + " dB";
+  setAxis("z"); draw();
+  chks.forEach(([id]) => $(id).onchange = vis);
+  let pend = null;
+  $("pos").oninput = (e) => { pos = +e.target.value; info(); if (pend) cancelAnimationFrame(pend); pend = requestAnimationFrame(() => draw(curCam())); };
+  $("zs").oninput = (e) => { zs = +e.target.value; $("zsv").textContent = zs + "×"; draw(curCam()); };
+  $("rng").oninput = (e) => { range = +e.target.value; $("rngv").textContent = range + " dB"; draw(curCam()); };
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => draw(curCam()));
+}
+</script>

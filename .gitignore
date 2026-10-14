@@ -1,0 +1,16 @@
+# machine-local
+.claude/
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# third-party sample data and documents
+Models/odb_rigidflex_sample/
+Engine/docs/odb_spec_user.pdf
+
+# generated results (regenerate with Models/<model>/analysis/); keep the README figures
+Models/*/results/*
+!Models/notch_filter/results/sparams_currents.png
+!Models/notch_filter/results/notch_filter.png
+!Models/stepped_impedance_lpf/results/lpf.png

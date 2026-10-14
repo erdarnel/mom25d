@@ -1,0 +1,202 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>mom25d surface currents</title>
+<style>
+:root {
+  --bg: #f3f4f1; --panel: #fbfbf9; --fg: #1d2420; --muted: #5d675f; --rule: #d5d9d2;
+  --port: #c0392b; --wire: rgba(29, 36, 32, 0.30); --focus: #2a78d6;
+  --f-body: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --f-mono: Consolas, "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #141917; --panel: #1b211e; --fg: #e3e8e2; --muted: #9aa69c; --rule: #2e3732;
+          --port: #ff6b5c; --wire: rgba(227, 232, 226, 0.25); color-scheme: dark; }
+}
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--f-body); }
+.wrap { padding: 14px 16px 20px; max-width: 1700px; margin: 0 auto; display: grid; gap: 12px; }
+h1 { font-size: 1.4rem; margin: 0; }
+.sub { color: var(--muted); margin: 2px 0 0; max-width: 125ch; }
+.filters { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.filters label { color: var(--muted); font-size: 0.8rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-right: 6px; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 5px; overflow: hidden; vertical-align: middle; }
+.seg button { font: 600 0.85rem var(--f-body); padding: 5px 10px; background: transparent; color: var(--fg); border: 0; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; align-items: start; }
+#plot { height: min(80vh, 880px); min-height: 440px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; }
+aside { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; display: grid; gap: 14px; max-height: min(80vh, 880px); overflow-y: auto; overflow-x: hidden; }
+.lbl { font-weight: 600; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.chk { display: flex; gap: 7px; align-items: center; cursor: pointer; }
+.row { display: flex; justify-content: space-between; } input[type="range"] { width: 100%; }
+.mono { font-family: var(--f-mono); font-size: 0.85rem; }
+table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+th, td { padding: 2px 4px; text-align: right; font-family: var(--f-mono); }
+th:first-child, td:first-child { text-align: left; font-family: var(--f-body); color: var(--muted); }
+.note { color: var(--muted); font-size: 0.8rem; margin: 0; }
+.vgrid { display: grid; grid-template-columns: repeat(3, 1fr); }
+#err { color: var(--port); }
+@media (max-width: 900px) { .main { grid-template-columns: minmax(0, 1fr); } aside { max-height: none; } }
+</style>
+
+<div class="wrap">
+  <header><h1 id="title"></h1><p class="sub" id="subtitle"></p></header>
+  <div class="filters">
+    <span><label>Frequency</label><span class="seg" id="fsel" role="group" aria-label="Frequency"></span></span>
+    <span><label>Driven port</label><span class="seg" id="psel" role="group" aria-label="Driven port"></span></span>
+  </div>
+  <div class="main">
+    <div id="plot" role="img" aria-label="3D surface current map"></div>
+    <aside>
+      <div><div class="lbl">Show</div><div id="chk"></div></div>
+      <div><div class="row"><span class="lbl">Colour range</span><span class="mono" id="rngv"></span></div>
+        <input type="range" id="rng" min="10" max="80" step="5" value="60" aria-label="dB range"></div>
+      <div><div class="row"><span class="lbl">Z exaggeration</span><span class="mono" id="zsv"></span></div>
+        <input type="range" id="zs" min="1" max="10" step="1" value="4" aria-label="Z exaggeration"></div>
+      <div><div class="lbl">View</div><div class="seg vgrid" id="views" role="group" aria-label="Camera"></div></div>
+      <div><div class="lbl">S-parameters at this frequency (dB, 50 Ω)</div><table id="sp"></table></div>
+      <div><div class="lbl">Case</div><div class="mono" id="case"></div></div>
+      <div id="notes"></div>
+      <p class="note" id="err" hidden></p>
+    </aside>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<script>
+const D = __DATA__;
+const $ = (id) => document.getElementById(id);
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const dark = () => window.matchMedia("(prefers-color-scheme: dark)").matches;
+const RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
+const cscale = () => { const r = dark() ? [...RAMP].reverse() : RAMP; return r.map((c, i) => [i / (r.length - 1), c]); };
+$("title").innerHTML = D.title; $("subtitle").innerHTML = D.subtitle;
+$("notes").innerHTML = D.notes.map(n => `<p class="note">${n}</p>`).join("");
+let zs = 4, range = Math.min(60, D.floor);
+$("rng").max = D.floor; $("rng").value = range;
+const freqs = [...new Set(D.cases.map(c => c.f))], ports = D.ports_list;
+let fsel = freqs[Math.floor(freqs.length / 2)], psel = ports[0];
+const dec = (s) => { const b = atob(s), a = new Float32Array(b.length); for (let i = 0; i < b.length; i++) { const c = b.charCodeAt(i); a[i] = c === 255 ? NaN : c / 250 * D.floor - D.floor; } return a; };
+const caseOf = () => D.cases.find(c => c.f === fsel && c.port === psel);
+const fams = [...new Set(D.layers.map(L => L.fam))];
+const zmid = (D.zrange[0] + D.zrange[1]) / 2;
+const chks = fams.map(f => [`t-${f}`, `${f} copper`, true]).concat([["t-vias", "Via barrels", true]],
+  D.planes.map(P => [`t-p-${P.name}`, `Plane ${P.name} current`, false]), [["t-wire", "Mesh edges", false], ["t-ports", "Port labels", true]]);
+$("chk").innerHTML = chks.map(([id, lab, on]) => `<label class="chk"><input type="checkbox" id="${id}" ${on ? "checked" : ""}> ${lab}</label>`).join("");
+
+function edges(nodes, tris, z) {
+  const x = [], y = [], zz = [], seen = new Set();
+  for (const t of tris) for (let a = 0; a < 3; a++) {
+    const p = t[a], q = t[(a + 1) % 3], key = p < q ? p * 1e6 + q : q * 1e6 + p;
+    if (seen.has(key)) continue; seen.add(key);
+    x.push(nodes[p][0], nodes[q][0], null); y.push(nodes[p][1], nodes[q][1], null); zz.push(z, z, null);
+  }
+  return { x, y, z: zz };
+}
+const color = () => ({ colorscale: cscale(), cmin: -range, cmax: 0, showscale: false, hovertemplate: "%{text}<extra></extra>" });
+const fmtA = (db, vmax) => (vmax * Math.pow(10, db / 20)).toPrecision(3) + " A/m";
+function surf(name, nodes, tris, z, v, C, label) {
+  return { type: "mesh3d", x: nodes.map(p => p[0]), y: nodes.map(p => p[1]), z: nodes.map(() => z * zs),
+    i: tris.map(q => q[0]), j: tris.map(q => q[1]), k: tris.map(q => q[2]),
+    intensity: Array.from(v), intensitymode: "vertex", ...color(), flatshading: false, lighting: { ambient: 1, diffuse: 0, specular: 0 },
+    text: Array.from(v, d => `${label}<br>${d.toFixed(1)} dB<br>${fmtA(d, C.vmax)}`) };
+}
+const IDX = {};
+function traces() {
+  const C = caseOf(), t = [], add = (name, tr) => { (IDX[name] = IDX[name] || []).push(t.length); t.push(tr); };
+  for (const L of D.layers) {
+    add("cu_" + L.fam, surf(L.name, L.nodes, L.tris, L.z, dec(C.cu[L.name]), C, L.name));
+    const dz = (L.z >= zmid ? 1 : -1) * 0.004;
+    add("wire_" + L.fam, { type: "scatter3d", mode: "lines", ...edges(L.nodes, L.tris, (L.z + dz) * zs), line: { color: css("--wire"), width: 1 }, hoverinfo: "skip" });
+  }
+  for (const [name, Wl] of Object.entries(D.walls)) {
+    const v = dec(C.walls[name]), x = [], y = [], z = [], i = [], j = [], k = [], it = [], tx = [];
+    Wl.seg.forEach(([xa, ya, xb, yb], q) => {
+      const n = x.length, lab = `${name} side wall<br>${v[q].toFixed(1)} dB<br>${fmtA(v[q], C.vmax)}`;
+      x.push(xa, xb, xb, xa); y.push(ya, yb, yb, ya); z.push(Wl.z0 * zs, Wl.z0 * zs, Wl.z1 * zs, Wl.z1 * zs);
+      it.push(v[q], v[q], v[q], v[q]); tx.push(lab, lab, lab, lab); i.push(n, n); j.push(n + 1, n + 2); k.push(n + 2, n + 3);
+    });
+    add("cu_" + name, { type: "mesh3d", x, y, z, i, j, k, intensity: it, intensitymode: "vertex", ...color(), text: tx, flatshading: true, lighting: { ambient: 1, diffuse: 0, specular: 0 } });
+  }
+  if (D.segs.length) {
+    const vv = dec(C.vias), x = [], y = [], z = [], I = [], J = [], K = [], it = [], tx = [], n = 10;
+    D.segs.forEach((s, q) => {
+      const o = x.length;
+      for (let a = 0; a < n; a++) {
+        const ang = 2 * Math.PI * a / n, cx = s.xy[0] + s.r * Math.cos(ang), cy = s.xy[1] + s.r * Math.sin(ang);
+        x.push(cx, cx); y.push(cy, cy); z.push(s.z0 * zs, s.z1 * zs); it.push(vv[q], vv[q]);
+        const lab = `via ${s.name} ${s.z0.toFixed(2)}–${s.z1.toFixed(2)} mm<br>${vv[q].toFixed(1)} dB<br>${fmtA(vv[q], C.vmax)}`; tx.push(lab, lab);
+      }
+      for (let a = 0; a < n; a++) { const p = o + 2 * a, r = o + 2 * ((a + 1) % n); I.push(p, p + 1); J.push(r, r); K.push(p + 1, r + 1); }
+    });
+    add("vias", { type: "mesh3d", x, y, z, i: I, j: J, k: K, intensity: it, intensitymode: "vertex", ...color(), text: tx, flatshading: false, lighting: { ambient: 0.9, diffuse: 0.3 } });
+  }
+  for (const P of D.planes) if (C.planes[P.name]) add("p_" + P.name, surf(P.name, D.pmeshes[P.mesh].nodes, D.pmeshes[P.mesh].tris, P.z, dec(C.planes[P.name]), C, `plane ${P.name}`));
+  add("cbar", { type: "scatter3d", mode: "markers", x: [null], y: [null], z: [null], hoverinfo: "skip",
+    marker: { color: [0], colorscale: cscale(), cmin: -range, cmax: 0, showscale: true,
+      colorbar: { title: { text: "dB re max", side: "right" }, thickness: 12, len: 0.6, x: 1.0, tickfont: { color: css("--muted") } } } });
+  add("ports", { type: "scatter3d", mode: "text", x: D.ports.map(p => p.ref[0]), y: D.ports.map(p => p.ref[1]),
+    z: D.ports.map(p => (p.z + (p.z >= zmid ? 0.35 : -0.35)) * zs), text: D.ports.map(p => p.name),
+    textfont: { family: "Consolas, monospace", size: 13, color: css("--port") }, hoverinfo: "skip" });
+  return t;
+}
+const [x0, x1, y0, y1] = D.bounds, W = x1 - x0, zspan = () => (D.zrange[1] - D.zrange[0] + 1) * zs;
+const nc = (x, y, z) => ({ x: (x - (x0 + x1) / 2) / W, y: (y - (y0 + y1) / 2) / W, z: (z - zmid) * zs / W });
+function cam(name) {
+  const c0 = { x: 0, y: 0, z: 0 }, up = { x: 0, y: 0, z: 1 };
+  if (name === "iso") return { eye: { x: -0.55, y: -0.95, z: 0.6 }, center: c0, up };
+  if (name === "top") return { eye: { x: 0, y: -0.001, z: 1.1 }, center: c0, up: { x: 0, y: 1, z: 0 } };
+  if (name === "bot") return { eye: { x: 0, y: -0.001, z: -1.1 }, center: c0, up: { x: 0, y: 1, z: 0 } };
+  if (name === "side") return { eye: { x: 0, y: -1.3, z: 0.02 }, center: c0, up };
+  const f = D.focus[name], c = nc(f[0], f[1], f[2]), d = 0.15;
+  return { eye: { x: c.x - 0.7 * d, y: c.y - d, z: c.z + 0.6 * d }, center: c, up };
+}
+function layout(camera) {
+  const ax = (title) => ({ title: { text: title, font: { size: 12, color: css("--muted") } }, color: css("--muted"),
+    gridcolor: css("--rule"), zerolinecolor: css("--rule"), showbackground: false, showspikes: false });
+  const zr = zspan();
+  return { paper_bgcolor: css("--panel"), font: { color: css("--fg") }, margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, uirevision: "keep",
+    scene: { aspectmode: "manual", aspectratio: { x: 1, y: (y1 - y0) / W, z: zr / W },
+      xaxis: { ...ax("x [mm]"), range: [x0, x1] }, yaxis: { ...ax("y [mm]"), range: [y0, y1] },
+      zaxis: { ...ax(`z ×${zs}`), range: [zmid * zs - zr / 2, zmid * zs + zr / 2], showticklabels: false },
+      camera: camera || cam("iso") } };
+}
+const groups = Object.fromEntries(fams.map(f => [`t-${f}`, ["cu_" + f]]));
+Object.assign(groups, { "t-vias": ["vias"], "t-ports": ["ports"] }, Object.fromEntries(D.planes.map(P => [`t-p-${P.name}`, ["p_" + P.name]])));
+function vis() {
+  for (const [id, keys] of Object.entries(groups)) for (const k of keys) if (IDX[k]) Plotly.restyle("plot", { visible: $(id).checked }, IDX[k]);
+  for (const f of fams) if (IDX["wire_" + f]) Plotly.restyle("plot", { visible: $("t-wire").checked && $("t-" + f).checked }, IDX["wire_" + f]);
+}
+function info() {
+  const C = caseOf(), S = C.sdb, n = ports.length;
+  $("case").innerHTML = `${fsel} GHz, ${psel} driven<br>max |J| ${C.vmax.toPrecision(3)} A/m`;
+  $("sp").innerHTML = S ? `<tr><th></th>${ports.map((p, j) => `<th>${j + 1}</th>`).join("")}</tr>` +
+    S.map((r, i) => `<tr><td>${i + 1} ${ports[i]}</td>${r.map(v => `<td>${v.toFixed(1)}</td>`).join("")}</tr>`).join("") : "";
+}
+function draw(camera) { for (const k in IDX) delete IDX[k]; Plotly.react("plot", traces(), layout(camera), { responsive: true, displaylogo: false }); vis(); info(); }
+const curCam = () => $("plot")._fullLayout?.scene?.camera;
+function seg(el, items, cur, fmt, onpick) {
+  el.innerHTML = items.map(v => `<button aria-pressed="${v === cur}" data-v="${v}">${fmt(v)}</button>`).join("");
+  el.querySelectorAll("button").forEach(b => b.onclick = () => {
+    el.querySelectorAll("button").forEach(c => c.setAttribute("aria-pressed", String(c === b))); onpick(b.dataset.v); });
+}
+const views = [["iso", "3D"], ["top", "Top"], ["bot", "Bottom"], ["side", "Side"], ...Object.keys(D.focus).map(k => [k, k])];
+$("views").innerHTML = views.map(([v, lab], i) => `<button id="v-${v}" aria-pressed="${i === 0}">${lab}</button>`).join("");
+if (typeof Plotly === "undefined") {
+  $("err").hidden = false; $("err").textContent = "Plotly did not load (cdn.jsdelivr.net blocked?). Reload to try again.";
+} else {
+  seg($("fsel"), freqs, fsel, v => `${v} GHz`, v => { fsel = +v; draw(curCam()); });
+  seg($("psel"), ports, psel, v => v, v => { psel = v; draw(curCam()); });
+  $("zsv").textContent = zs + "×"; $("rngv").textContent = range + " dB";
+  draw();
+  chks.forEach(([id]) => $(id).onchange = vis);
+  $("zs").oninput = (e) => { zs = +e.target.value; $("zsv").textContent = zs + "×"; draw(curCam()); };
+  $("rng").oninput = (e) => { range = +e.target.value; $("rngv").textContent = range + " dB"; draw(curCam()); };
+  for (const [v] of views) $("v-" + v).onclick = () => {
+    views.forEach(([w]) => $("v-" + w).setAttribute("aria-pressed", String(w === v)));
+    Plotly.relayout("plot", { "scene.camera": cam(v) });
+  };
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => draw(curCam()));
+}
+</script>

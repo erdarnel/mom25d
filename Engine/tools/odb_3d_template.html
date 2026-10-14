@@ -1,0 +1,193 @@
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 3D canvas left; panel right with stack table and layer switches (stacks on phones). */
+:root {
+  --bg: #f3f4f1; --panel: #fbfbf9; --fg: #1d2420; --muted: #5d675f; --rule: #d5d9d2;
+  --board: #b9a874;      /* laminate */
+  --via: #7a8088; --via2: #c0563a; --focus: #2f8f8a;
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Source Sans 3", "Segoe UI", Roboto, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --cu-l: 46%;           /* copper lightness (layer hues are computed) */
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #141917; --panel: #1b211e; --fg: #e3e8e2; --muted: #9aa69c; --rule: #2e3732;
+    --board: #8f8466; --via: #a4a9ae; --via2: #e07a5f; --focus: #4fb3ac; --cu-l: 60%; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #141917; --panel: #1b211e; --fg: #e3e8e2; --muted: #9aa69c; --rule: #2e3732;
+  --board: #8f8466; --via: #a4a9ae; --via2: #e07a5f; --focus: #4fb3ac; --cu-l: 60%; color-scheme: dark; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--f-body); }
+.wrap { padding-inline: 16px; padding-block: 18px 24px; max-width: 1600px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: grid; gap: 4px; }
+h1 { font: 700 1.55rem/1.15 var(--f-display); margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 0; max-width: 85ch; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; align-items: start; }
+#plot { height: min(80vh, 860px); min-height: 420px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; min-width: 0; }
+aside { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px; display: grid; gap: 16px; min-width: 0; }
+.blk { display: grid; gap: 8px; }
+.lbl { font: 600 0.72rem/1 var(--f-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; }
+dt { color: var(--muted); } dd { margin: 0; text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: 0.88rem; }
+.stack { border: 1px solid var(--rule); border-radius: 4px; overflow: auto; max-height: 360px; font-size: 0.84rem; }
+.stack table { border-collapse: collapse; width: 100%; }
+.stack td { padding: 3px 8px; border-top: 1px solid var(--rule); white-space: nowrap; }
+.stack tr:first-child td { border-top: 0; }
+.stack td.num { text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.stack tr.d td, .stack tr.m td { background: color-mix(in srgb, var(--board) 16%, transparent); color: var(--muted); }
+.stack label { display: flex; gap: 6px; align-items: center; cursor: pointer; color: var(--fg); }
+.sw { width: 11px; height: 11px; border-radius: 2px; flex: none; }
+.chk { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.seg { display: flex; border: 1px solid var(--rule); border-radius: 5px; overflow: hidden; }
+.seg button { flex: 1; font: 600 0.85rem var(--f-body); padding: 6px 8px; background: transparent; color: var(--fg); border: 0; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.mini { display: flex; gap: 6px; }
+.mini button { font: 600 0.8rem var(--f-body); padding: 3px 8px; border: 1px solid var(--rule); border-radius: 4px; background: transparent; color: var(--fg); cursor: pointer; }
+input[type="range"] { width: 100%; accent-color: var(--focus); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.note { color: var(--muted); font-size: 0.85rem; margin: 0; }
+#err { color: var(--via2); }
+@media (max-width: 860px) { .main { grid-template-columns: minmax(0, 1fr); } #plot { height: 62vh; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1 id="h1"></h1>
+    <p class="sub" id="sub"></p>
+  </header>
+  <div class="main">
+    <div id="plot" role="img" aria-label="3D view of the board copper layers"></div>
+    <aside>
+      <div class="blk"><div class="lbl">Board</div><dl id="stats"></dl></div>
+      <div class="blk">
+        <div class="row"><span class="lbl">Stack (top to bottom)</span>
+          <span class="mini"><button id="all">All</button><button id="none">None</button><button id="outer">Outer</button></span></div>
+        <div class="stack"><table id="stack"></table></div>
+      </div>
+      <div class="blk">
+        <div class="lbl">Show</div>
+        <label class="chk"><input type="checkbox" id="t-board" checked> Board outline (translucent)</label>
+        <label class="chk"><input type="checkbox" id="t-vias" checked> Vias (<span style="color:var(--via)">through</span> / <span style="color:var(--via2)">blind &amp; buried</span>)</label>
+      </div>
+      <div class="blk">
+        <div class="row"><span class="lbl">Z exaggeration</span><span class="mono" id="zsv"></span></div>
+        <input type="range" id="zs" min="1" max="40" step="1" value="12" aria-label="Z exaggeration factor">
+      </div>
+      <div class="blk">
+        <div class="lbl">View</div>
+        <div class="seg" role="group" aria-label="Camera">
+          <button id="v-iso" aria-pressed="true">3D</button><button id="v-top" aria-pressed="false">Top</button><button id="v-side" aria-pressed="false">Side</button>
+        </div>
+      </div>
+      <p class="note">Layer heights, thicknesses, ε<sub>r</sub> and tan δ come from the ODB++ export (what the mom25d importer reads). Copper outlines simplified to 20 µm.</p>
+      <p class="note" id="err" hidden></p>
+    </aside>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<script>
+const D = __DATA__;
+const $ = (id) => document.getElementById(id);
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let zs = 12;
+const vis = {};  // layer name -> shown
+D.layers.forEach(L => vis[L.name] = true);
+const nL = D.layers.length;
+const hue = (i) => Math.round(28 + (i / Math.max(nL - 1, 1)) * 190);   // copper orange -> teal/blue
+const colorOf = (i) => `hsl(${hue(i)} 62% ${css("--cu-l")})`;
+
+$("h1").textContent = D.title;
+const [bx0, bx1, by0, by1] = D.bounds;
+$("sub").textContent = `${D.layers.length} copper layers, ${D.info.n_vias.toLocaleString("en-US")} vias, board ${(bx1 - bx0).toFixed(1)} × ${(by1 - by0).toFixed(1)} mm, ${D.board.total.toFixed(3)} mm thick. Drag to rotate, scroll to zoom; z is exaggerated.`;
+$("stats").innerHTML = [["Stack data", D.info.standard ? "standard (dielectric layers)" : "vendor (Altium style)"],
+  ["Material", D.info.material || "—"], ["Thickness", D.board.total.toFixed(3) + " mm"], ["Copper triangles", D.info.n_tri.toLocaleString("en-US")]]
+  .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+
+function stackTable() {
+  let i = 0;
+  $("stack").innerHTML = D.stack.map(r => {
+    if (r.kind === "copper") {
+      const k = D.layers.findIndex(L => L.name === r.name);
+      const sw = k >= 0 ? `<span class="sw" style="background:${colorOf(k)}"></span>` : "";
+      const box = k >= 0 ? `<input type="checkbox" data-l="${r.name}" ${vis[r.name] ? "checked" : ""}>` : "";
+      return `<tr><td><label>${box}${sw}${r.name}</label></td><td class="num">${(r.t * 1000).toFixed(1)} µm</td><td class="num"></td></tr>`;
+    }
+    const eps = r.eps ? `ε ${r.eps}` : (r.kind === "mask" ? "ε —" : "");
+    return `<tr class="${r.kind[0]}"><td>${r.name}</td><td class="num">${(r.t * 1000).toFixed(1)} µm</td><td class="num">${eps}</td></tr>`;
+  }).join("");
+  document.querySelectorAll("[data-l]").forEach(cb => cb.onchange = () => { vis[cb.dataset.l] = cb.checked; applyVis(); });
+}
+
+const IDX = {};
+function traces() {
+  const t = [];
+  const add = (k, tr) => { IDX[k] = t.length; t.push(tr); };
+  const B = D.board, T = B.total * zs;
+  // board volume: top/bottom faces + walls (translucent)
+  const nb = B.x.length, xs = B.x.concat(B.x), ys = B.y.concat(B.y), zz = B.x.map(() => 0).concat(B.x.map(() => T));
+  const I = [], J = [], K = [];
+  for (const q of B.t) { I.push(q[0], q[0] + nb); J.push(q[1], q[1] + nb); K.push(q[2], q[2] + nb); }
+  add("board", { type: "mesh3d", x: xs, y: ys, z: zz, i: I, j: J, k: K, color: css("--board"), opacity: 0.13, hoverinfo: "skip", flatshading: true });
+  const wx = [], wy = [], wz = [];
+  for (const p of B.ring) { wx.push(p[0], p[0], null); wy.push(p[1], p[1], null); wz.push(0, T, null); }
+  const rx = B.ring.map(p => p[0]), ry = B.ring.map(p => p[1]);
+  add("edge", { type: "scatter3d", mode: "lines", x: [...rx, null, ...rx], y: [...ry, null, ...ry], z: [...rx.map(() => 0), null, ...rx.map(() => T)],
+    line: { color: css("--board"), width: 2 }, hoverinfo: "skip" });
+  D.layers.forEach((L, k) => add("L:" + L.name, { type: "mesh3d", x: L.x, y: L.y, z: L.x.map(() => L.z * zs),
+    i: L.t.map(q => q[0]), j: L.t.map(q => q[1]), k: L.t.map(q => q[2]), color: colorOf(k), opacity: 1, flatshading: true,
+    lighting: { ambient: 0.95, diffuse: 0.15 }, hovertemplate: `${L.name}<br>x %{x:.2f} mm<br>y %{y:.2f} mm<extra></extra>` }));
+  for (const [key, through, col] of [["via_t", 1, "--via"], ["via_b", 0, "--via2"]]) {
+    const vx = [], vy = [], vz = [];
+    for (const v of D.vias) if (v[4] === through) { vx.push(v[0], v[0], null); vy.push(v[1], v[1], null); vz.push(v[2] * zs, v[3] * zs, null); }
+    add(key, { type: "scatter3d", mode: "lines", x: vx, y: vy, z: vz, line: { color: css(col), width: 2 }, hoverinfo: "skip" });
+  }
+  return t;
+}
+const cams = {
+  iso: { eye: { x: -0.55, y: -1.35, z: 0.9 }, center: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+  top: { eye: { x: 0, y: 0, z: 1.7 }, center: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 } },
+  side: { eye: { x: 0, y: -2.2, z: 0.06 }, center: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+};
+function layout(cam) {
+  const ax = (title) => ({ title: { text: title, font: { size: 12, color: css("--muted") } }, color: css("--muted"), gridcolor: css("--rule"), zerolinecolor: css("--rule"), showbackground: false });
+  const T = D.board.total * zs, w = bx1 - bx0;
+  return { paper_bgcolor: css("--panel"), font: { family: "Source Sans 3, sans-serif", color: css("--fg") }, margin: { l: 0, r: 0, t: 0, b: 0 },
+    showlegend: false, uirevision: "keep",
+    scene: { aspectmode: "manual", aspectratio: { x: 1, y: (by1 - by0) / w, z: T / w }, xaxis: ax("x [mm]"), yaxis: ax("y [mm]"),
+      zaxis: { ...ax(`z ×${zs}`), range: [0, T * 1.02], showticklabels: false }, camera: cam || cams.iso } };
+}
+function applyVis() {
+  const set = (k, on) => IDX[k] !== undefined && Plotly.restyle("plot", { visible: on }, [IDX[k]]);
+  D.layers.forEach(L => set("L:" + L.name, vis[L.name]));
+  set("board", $("t-board").checked); set("edge", $("t-board").checked);
+  set("via_t", $("t-vias").checked); set("via_b", $("t-vias").checked);
+}
+function draw(cam) { Plotly.react("plot", traces(), layout(cam), { responsive: true, displaylogo: false, modeBarButtonsToRemove: ["toImage"] }); applyVis(); }
+const curCam = () => document.getElementById("plot")._fullLayout?.scene?.camera;
+const press = (ids, id) => ids.forEach(b => $(b).setAttribute("aria-pressed", String(b === id)));
+
+stackTable();
+if (typeof Plotly === "undefined") {
+  $("err").hidden = false; $("err").textContent = "The 3D library did not load (cdn.jsdelivr.net blocked?). Reload to try again.";
+} else {
+  $("zsv").textContent = zs + "×";
+  draw();
+  $("t-board").onchange = applyVis; $("t-vias").onchange = applyVis;
+  $("zs").oninput = (e) => { zs = +e.target.value; $("zsv").textContent = zs + "×"; draw(curCam()); };
+  const views = ["v-iso", "v-top", "v-side"];
+  for (const [id, c] of [["v-iso", "iso"], ["v-top", "top"], ["v-side", "side"]]) $(id).onclick = () => { press(views, id); Plotly.relayout("plot", { "scene.camera": cams[c] }); };
+  const setAll = (f) => { D.layers.forEach((L, k) => vis[L.name] = f(L, k)); stackTable(); applyVis(); };
+  $("all").onclick = () => setAll(() => true);
+  $("none").onclick = () => setAll(() => false);
+  $("outer").onclick = () => setAll((L, k) => k === 0 || k === nL - 1);
+  const redraw = () => { stackTable(); draw(curCam()); };
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw);
+  new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+}
+</script>

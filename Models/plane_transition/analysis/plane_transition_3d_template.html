@@ -1,0 +1,241 @@
+<title>Plane Transition Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one working view -- 3D canvas left, instrument panel right (stacks on phones). */
+:root {
+  --bg: #f3f4f1; --panel: #fbfbf9; --fg: #1d2420; --muted: #5d675f; --rule: #d5d9d2;
+  --top: #c46a2f;        /* top-layer copper */
+  --inner: #2f8f8a;      /* inner-layer copper */
+  --plane: #6f7f9a;      /* inner plane L2 */
+  --ground: #7b8a7f;
+  --substrate: #c9b98e;  /* RO4350B tan */
+  --via: #d9a23a;        /* signal via */
+  --stitch: #8a8f95;     /* stitching vias */
+  --ring: #b0325a;       /* antipad ring nodes */
+  --wire: rgba(29, 36, 32, 0.45);
+  --focus: #2f8f8a;
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Source Sans 3", "Segoe UI", Roboto, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141917; --panel: #1b211e; --fg: #e3e8e2; --muted: #9aa69c; --rule: #2e3732;
+    --top: #d9864d; --inner: #4fb3ac; --plane: #8796b3; --ground: #59665d; --substrate: #8f8466;
+    --via: #e9b65a; --stitch: #a4a9ae; --ring: #e0628a; --wire: rgba(227, 232, 226, 0.38); --focus: #4fb3ac;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141917; --panel: #1b211e; --fg: #e3e8e2; --muted: #9aa69c; --rule: #2e3732;
+  --top: #d9864d; --inner: #4fb3ac; --plane: #8796b3; --ground: #59665d; --substrate: #8f8466;
+  --via: #e9b65a; --stitch: #a4a9ae; --ring: #e0628a; --wire: rgba(227, 232, 226, 0.38); --focus: #4fb3ac;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--f-body); }
+.wrap { padding-inline: 16px; padding-block: 18px 24px; max-width: 1500px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: grid; gap: 4px; }
+h1 { font: 700 1.55rem/1.15 var(--f-display); letter-spacing: 0.01em; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 0; max-width: 80ch; }
+.sub code, .mono { font-family: var(--f-mono); font-size: 0.86em; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start; }
+#plot { height: min(78vh, 820px); min-height: 420px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; min-width: 0; }
+aside { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px; display: grid; gap: 16px; min-width: 0; }
+.blk { display: grid; gap: 8px; }
+.lbl { font: 600 0.72rem/1 var(--f-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+.stack { display: grid; gap: 0; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; font-size: 0.86rem; }
+.stack div { display: grid; grid-template-columns: 12px 1fr auto; gap: 8px; align-items: center; padding: 4px 8px; }
+.stack div + div { border-top: 1px solid var(--rule); }
+.stack .sw { width: 12px; height: 12px; border-radius: 2px; }
+.stack .z { font-family: var(--f-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.diel { background: color-mix(in srgb, var(--substrate) 22%, transparent); color: var(--muted); }
+.chk { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+input[type="range"] { width: 100%; accent-color: var(--inner); }
+.row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.seg { display: flex; border: 1px solid var(--rule); border-radius: 5px; overflow: hidden; }
+.seg button { flex: 1; font: 600 0.85rem var(--f-body); padding: 6px 8px; background: transparent; color: var(--fg); border: 0; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.note { color: var(--muted); font-size: 0.85rem; margin: 0; }
+#err { color: var(--top); }
+@media (max-width: 820px) { .main { grid-template-columns: minmax(0, 1fr); } #plot { height: 62vh; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Plane Transition Model</h1>
+    <p class="sub">Top microstrip over an inner ground plane <code>L2</code>, via through a 0.7 mm antipad, stripline between <code>L2</code> and ground, four stitching vias <code>L2 → gnd</code>. Three 0.254 mm layers, ε<sub>r</sub> 3.66. This is the mesh the solver uses; drag to rotate, scroll to zoom; z is exaggerated.</p>
+  </header>
+  <div class="main">
+    <div id="plot" role="img" aria-label="3D view of the multilayer transition model"></div>
+    <aside>
+      <div class="blk">
+        <div class="lbl">Stack</div>
+        <div class="stack" id="stack"></div>
+      </div>
+      <div class="blk">
+        <div class="lbl">Unknowns</div>
+        <dl id="stats"></dl>
+      </div>
+      <div class="blk">
+        <div class="lbl">Show</div>
+        <label class="chk"><input type="checkbox" id="t-wire" checked> Mesh edges</label>
+        <label class="chk"><input type="checkbox" id="t-l2" checked> Plane L2 (with antipad)</label>
+        <label class="chk"><input type="checkbox" id="t-gnd" checked> Ground plane</label>
+        <label class="chk"><input type="checkbox" id="t-sub"> Dielectric layers</label>
+        <label class="chk"><input type="checkbox" id="t-rings" checked> Antipad ring nodes</label>
+      </div>
+      <div class="blk">
+        <div class="row"><span class="lbl">Z exaggeration</span><span class="mono" id="zsv"></span></div>
+        <input type="range" id="zs" min="1" max="20" step="1" value="6" aria-label="Z exaggeration factor">
+      </div>
+      <div class="blk">
+        <div class="lbl">View</div>
+        <div class="seg" role="group" aria-label="Camera">
+          <button id="v-iso" aria-pressed="true">3D</button>
+          <button id="v-side" aria-pressed="false">Side</button>
+          <button id="v-via" aria-pressed="false">Via</button>
+        </div>
+      </div>
+      <p class="note">The antipad is a hole in L2 the via passes without touching it. The solver closes the hole and puts the aperture field on 4 radial rings (pink), one voltage unknown each.</p>
+      <p class="note" id="err" hidden></p>
+    </aside>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<script>
+const D = __DATA__;
+const $ = (id) => document.getElementById(id);
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let zs = 6;
+
+const S = D.stats;
+$("stats").innerHTML = [["RWG edges", S.nb], ["Via segments", S.nv], ["Antipad rings", S.nf], ["Total N", S.N], ["Triangles", S.nt]]
+  .map(([k, v]) => `<dt>${k}</dt><dd>${v.toLocaleString("en-US")}</dd>`).join("");
+const zTop = D.layers.find(l => l.name === "top").z, zIn = D.layers.find(l => l.name === "inner").z;
+$("stack").innerHTML = [
+  ["--top", "top (microstrip)", zTop], ["", "dielectric 0.254 mm", null],
+  ["--plane", "L2 plane (antipad 0.7 mm)", D.planes.L2], ["", "dielectric 0.254 mm", null],
+  ["--inner", "inner (stripline)", zIn], ["", "dielectric 0.254 mm", null],
+  ["--ground", "ground", 0],
+].map(([c, n, z]) => c ? `<div><span class="sw" style="background:var(${c})"></span><span>${n}</span><span class="z">${z.toFixed(3)} mm</span></div>`
+                       : `<div class="diel"><span></span><span>${n}</span><span></span></div>`).join("");
+
+function lines(nodes, tris, z) {
+  const x = [], y = [], zz = [], seen = new Set();
+  for (const t of tris) for (let i = 0; i < 3; i++) {
+    const a = t[i], b = t[(i + 1) % 3], key = a < b ? a + "," + b : b + "," + a;
+    if (seen.has(key)) continue; seen.add(key);
+    x.push(nodes[a][0], nodes[b][0], null); y.push(nodes[a][1], nodes[b][1], null); zz.push(z, z, null);
+  }
+  return { x, y, z: zz };
+}
+function cylinder(v, n = 20) {
+  const x = [], y = [], z = [], i = [], j = [], k = [];
+  for (let s = 0; s < n; s++) {
+    const a = 2 * Math.PI * s / n;
+    x.push(v.xy[0] + v.r * Math.cos(a), v.xy[0] + v.r * Math.cos(a));
+    y.push(v.xy[1] + v.r * Math.sin(a), v.xy[1] + v.r * Math.sin(a));
+    z.push(v.z0 * zs, v.z1 * zs);
+  }
+  for (let s = 0; s < n; s++) {
+    const a = 2 * s, b = 2 * ((s + 1) % n);
+    i.push(a, a + 1); j.push(b, b); k.push(a + 1, b + 1);
+  }
+  return { x, y, z, i, j, k };
+}
+const [x0, x1, y0, y1] = D.bounds;
+function box3(zlo, zhi) {
+  const xs = [x0, x1, x1, x0, x0, x1, x1, x0], ys = [y0, y0, y1, y1, y0, y0, y1, y1], z = [zlo, zlo, zlo, zlo, zhi, zhi, zhi, zhi].map(v => v * zs);
+  return { x: xs, y: ys, z, i: [0, 0, 4, 4, 0, 0, 1, 1, 2, 2, 3, 3], j: [1, 2, 5, 6, 1, 5, 2, 6, 3, 7, 0, 4], k: [2, 3, 6, 7, 5, 4, 6, 5, 7, 6, 4, 7] };
+}
+
+const IDX = {};
+function traces() {
+  const t = [];
+  const add = (name, tr) => { IDX[name] = t.length; t.push(tr); };
+  // dielectric layers (off by default)
+  const subs = [[0, D.h], [D.h, 2 * D.h], [2 * D.h, 3 * D.h]];
+  subs.forEach((s, n) => add("sub" + n, { type: "mesh3d", ...box3(s[0], s[1] * 0.998), color: css("--substrate"), opacity: 0.12, hoverinfo: "skip", flatshading: true }));
+  add("gnd", { type: "mesh3d", x: [x0, x1, x1, x0], y: [y0, y0, y1, y1], z: [0, 0, 0, 0], i: [0, 0], j: [1, 2], k: [2, 3], color: css("--ground"), opacity: 0.5, hoverinfo: "skip", flatshading: true });
+  const P = D.plane;
+  add("l2", { type: "mesh3d", x: P.nodes.map(p => p[0]), y: P.nodes.map(p => p[1]), z: P.nodes.map(() => D.planes.L2 * zs),
+    i: P.tris.map(q => q[0]), j: P.tris.map(q => q[1]), k: P.tris.map(q => q[2]), color: css("--plane"), opacity: 0.38, hoverinfo: "skip", flatshading: true });
+  for (const L of D.layers) {
+    const col = css(L.name === "top" ? "--top" : "--inner");
+    add("cu_" + L.name, { type: "mesh3d", x: L.nodes.map(p => p[0]), y: L.nodes.map(p => p[1]), z: L.nodes.map(() => L.z * zs),
+      i: L.tris.map(q => q[0]), j: L.tris.map(q => q[1]), k: L.tris.map(q => q[2]), color: col, opacity: 1, flatshading: true,
+      lighting: { ambient: 0.95, diffuse: 0.2 }, hovertemplate: `${L.name}<br>x %{x:.3f} mm<br>y %{y:.3f} mm<extra></extra>` });
+    add("wire_" + L.name, { type: "scatter3d", mode: "lines", ...lines(L.nodes, L.tris, L.z * zs + 0.0015 * zs), line: { color: css("--wire"), width: 1 }, hoverinfo: "skip" });
+  }
+  D.vias.forEach((v, n) => add("via" + n, { type: "mesh3d", ...cylinder(v), color: css(v.kind === "signal" ? "--via" : "--stitch"), opacity: 1, flatshading: true,
+    hovertemplate: (v.kind === "signal" ? "signal via, antipad 0.7 mm" : "stitching via L2 → gnd") + "<extra></extra>" }));
+  // antipad ring nodes (circles at the plane)
+  const rx = [], ry = [], rz = [];
+  for (const R of D.rings) for (const r of R.r) {
+    for (let s = 0; s <= 48; s++) { const a = 2 * Math.PI * s / 48; rx.push(R.xy[0] + r * Math.cos(a)); ry.push(R.xy[1] + r * Math.sin(a)); rz.push(R.z * zs + 0.002); }
+    rx.push(null); ry.push(null); rz.push(null);
+  }
+  add("rings", { type: "scatter3d", mode: "lines", x: rx, y: ry, z: rz, line: { color: css("--ring"), width: 3 }, hoverinfo: "skip" });
+  // ports
+  const px = [], py = [], pz = [];
+  for (const p of D.ports) {
+    for (const q of [p.ref, p.gap]) { px.push(q[0], q[0], null); py.push(q[1] - p.w / 2, q[1] + p.w / 2, null); pz.push(p.z * zs + 0.004, p.z * zs + 0.004, null); }
+  }
+  add("ports", { type: "scatter3d", mode: "lines", x: px, y: py, z: pz, line: { color: css("--fg"), width: 6 }, hoverinfo: "skip" });
+  add("labels", { type: "scatter3d", mode: "text", x: D.ports.map(p => p.end[0]), y: D.ports.map(p => p.end[1]), z: D.ports.map(p => p.z * zs + 0.25 * zs * D.h),
+    text: D.ports.map(p => `${p.name} (${p.layer})`), textfont: { family: "IBM Plex Mono, monospace", size: 13, color: css("--fg") }, hoverinfo: "skip" });
+  return t;
+}
+const cams = {
+  iso: { eye: { x: -0.75, y: -1.15, z: 0.75 }, center: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+  side: { eye: { x: 0, y: -2.0, z: 0.05 }, center: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+  via: { eye: { x: -0.16, y: -0.22, z: 0.16 }, center: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+};
+function layout(cam) {
+  const ax = (title) => ({ title: { text: title, font: { size: 12, color: css("--muted") } }, color: css("--muted"),
+    gridcolor: css("--rule"), zerolinecolor: css("--rule"), showbackground: false });
+  const zr = 3 * D.h * zs;
+  return {
+    paper_bgcolor: css("--panel"), font: { family: "Source Sans 3, sans-serif", color: css("--fg") },
+    margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, uirevision: "keep",
+    scene: { aspectmode: "manual", aspectratio: { x: 1, y: (y1 - y0) / (x1 - x0), z: zr / (x1 - x0) },
+      xaxis: ax("x [mm]"), yaxis: ax("y [mm]"), zaxis: { ...ax(`z ×${zs}`), range: [0, zr * 1.05], showticklabels: false },
+      camera: cam || cams.iso },
+  };
+}
+function vis() {
+  const set = (names, on) => names.forEach(n => IDX[n] !== undefined && Plotly.restyle("plot", { visible: on }, [IDX[n]]));
+  set(["wire_top", "wire_inner"], $("t-wire").checked);
+  set(["l2"], $("t-l2").checked);
+  set(["gnd"], $("t-gnd").checked);
+  set(["sub0", "sub1", "sub2"], $("t-sub").checked);
+  set(["rings"], $("t-rings").checked);
+}
+function draw(cam) { Plotly.react("plot", traces(), layout(cam), { responsive: true, displaylogo: false, modeBarButtonsToRemove: ["toImage"] }); vis(); }
+const curCam = () => document.getElementById("plot")._fullLayout?.scene?.camera;
+const press = (ids, id) => ids.forEach(b => $(b).setAttribute("aria-pressed", String(b === id)));
+
+if (typeof Plotly === "undefined") {
+  $("err").hidden = false; $("err").textContent = "The 3D library did not load (cdn.jsdelivr.net blocked?). Reload to try again.";
+} else {
+  $("zsv").textContent = zs + "×";
+  draw();
+  ["t-wire", "t-l2", "t-gnd", "t-sub", "t-rings"].forEach(id => $(id).onchange = vis);
+  $("zs").oninput = (e) => { zs = +e.target.value; $("zsv").textContent = zs + "×"; draw(curCam()); };
+  const views = ["v-iso", "v-side", "v-via"];
+  for (const [id, c] of [["v-iso", "iso"], ["v-side", "side"], ["v-via", "via"]])
+    $(id).onclick = () => { press(views, id); Plotly.relayout("plot", { "scene.camera": cams[c] }); };
+  const redraw = () => draw(curCam());
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw);
+  new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+}
+</script>

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mom25d"
+version = "0.1.0"
+description = "2.5D method of moments (MPIE + RWG) for planar microstrip circuits"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22", "scipy>=1.8", "matplotlib", "threadpoolctl"]
+
+[project.optional-dependencies]
+odb = ["shapely>=2"]
+tri = ["shapely>=2", "triangle"]
+fast = ["numba>=0.60"]
+dxf = ["shapely>=2", "ezdxf"]
+
+[tool.setuptools]
+packages = ["mom25d"]
+
+[tool.setuptools.package-data]
+mom25d = ["templates/*.html"]  # view3d viewers
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

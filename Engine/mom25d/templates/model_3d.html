@@ -1,0 +1,217 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>mom25d model</title>
+<style>
+:root {
+  --bg: #f3f4f1; --panel: #fbfbf9; --fg: #1d2420; --muted: #5d675f; --rule: #d5d9d2;
+  --plane: #6f7f9a; --board: #c9b98e; --antipad: #b0325a; --pvia: #3a3f45; --via: #8a8f95;
+  --port: #d62728; --part: #2a9d3f; --wire: rgba(29, 36, 32, 0.40); --focus: #2f8f8a;
+  --f-body: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --f-mono: Consolas, "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #141917; --panel: #1b211e; --fg: #e3e8e2; --muted: #9aa69c; --rule: #2e3732;
+          --plane: #8796b3; --board: #8f8466; --antipad: #e0628a; --pvia: #c9ced3; --via: #8a9096;
+          --port: #ff5c5c; --part: #4cc46a; --wire: rgba(227, 232, 226, 0.35); color-scheme: dark; }
+}
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--f-body); }
+.wrap { padding: 14px 16px 20px; max-width: 1700px; margin: 0 auto; display: grid; gap: 12px; }
+h1 { font-size: 1.4rem; margin: 0; }
+.sub { color: var(--muted); margin: 2px 0 0; max-width: 125ch; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; align-items: start; }
+#plot { height: min(82vh, 900px); min-height: 440px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; }
+aside { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; display: grid; gap: 14px; max-height: min(82vh, 900px); overflow-y: auto; overflow-x: hidden; }
+.lbl { font-weight: 600; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; }
+dt { color: var(--muted); } dd { margin: 0; text-align: right; font-family: var(--f-mono); font-size: 0.85rem; }
+.stack { border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; font-size: 0.8rem; }
+.stack div { display: grid; grid-template-columns: 10px 1fr auto; gap: 6px; align-items: center; padding: 2px 6px; }
+.stack div + div { border-top: 1px solid var(--rule); }
+.stack .sw { width: 10px; height: 10px; border-radius: 2px; }
+.stack .z { font-family: var(--f-mono); color: var(--muted); }
+.stack .d { color: var(--muted); background: color-mix(in srgb, var(--board) 18%, transparent); }
+.chk { display: flex; gap: 7px; align-items: center; cursor: pointer; }
+input[type="range"] { width: 100%; }
+.row { display: flex; justify-content: space-between; }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--rule); border-radius: 5px; overflow: hidden; }
+.seg button { font: 600 0.82rem var(--f-body); padding: 5px 4px; background: transparent; color: var(--fg); border: 0; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.note { color: var(--muted); font-size: 0.8rem; margin: 0; }
+table { border-collapse: collapse; font-size: 0.78rem; width: 100%; }
+td { padding: 1px 3px; vertical-align: top; overflow-wrap: anywhere; } td.m { font-family: var(--f-mono); white-space: nowrap; }
+#err { color: var(--port); }
+@media (max-width: 900px) { .main { grid-template-columns: minmax(0, 1fr); } aside { max-height: none; } }
+</style>
+
+<div class="wrap">
+  <header><h1 id="title"></h1><p class="sub" id="subtitle"></p></header>
+  <div class="main">
+    <div id="plot" role="img" aria-label="3D view of the model"></div>
+    <aside>
+      <div><div class="lbl">Show</div><div id="chk"></div></div>
+      <div><div class="row"><span class="lbl">Z exaggeration</span><span id="zsv" style="font-family:var(--f-mono)"></span></div>
+        <input type="range" id="zs" min="1" max="10" step="1" value="4" aria-label="Z exaggeration"></div>
+      <div><div class="lbl">View</div><div class="seg" id="views" role="group" aria-label="Camera"></div></div>
+      <div><div class="lbl">Unknowns</div><dl id="stats"></dl></div>
+      <div><div class="lbl">Ports / parts</div><table id="ports"></table></div>
+      <div><div class="lbl">Stack (display z, mm)</div><div class="stack" id="stack"></div></div>
+      <div id="notes"></div>
+      <p class="note" id="err" hidden></p>
+    </aside>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<script>
+const D = __DATA__;
+const $ = (id) => document.getElementById(id);
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let zs = 4;
+$("title").innerHTML = D.title; $("subtitle").innerHTML = D.subtitle;
+$("notes").innerHTML = D.notes.map(n => `<p class="note">${n}</p>`).join("");
+const S = D.stats;
+$("stats").innerHTML = [["RWG edges", S.nb], ["  of which side walls", S.nw], ["Via segments", S.nv], ["Antipad rings", S.nf], ["Total N", S.N], ["Triangles", S.nt], ["Vias", S.nvias]]
+  .map(([k, v]) => `<dt>${k}</dt><dd>${v.toLocaleString("en-US")}</dd>`).join("");
+$("ports").innerHTML = D.ports.map(p => `<tr><td class="m">${p.name}</td><td>${p.layer}, ref (${p.ref[0].toFixed(3)}, ${p.ref[1].toFixed(3)}), W ${p.w}${p.note ? `<br><span style="color:var(--muted)">${p.note}</span>` : ""}</td></tr>`).join("")
+  + D.parts.map(c => `<tr><td class="m">${c.name}</td><td>${c.value}${c.note ? ` — <span style="color:var(--muted)">${c.note}</span>` : ""}</td></tr>`).join("");
+$("stack").innerHTML = [...D.stack].reverse().map(s => s.kind !== "d"
+  ? `<div><span class="sw" style="background:${s.kind === "cu" ? s.color : "var(--plane)"}"></span><span>${s.name}</span><span class="z">${s.z.toFixed(3)}</span></div>`
+  : `<div class="d"><span></span><span>${s.name} · ${s.t} mm</span><span class="z">εr ${s.er} · ${s.tand}</span></div>`).join("");
+if (D.flip) $("stack").innerHTML = [...D.stack].map(s => s.kind !== "d"
+  ? `<div><span class="sw" style="background:${s.kind === "cu" ? s.color : "var(--plane)"}"></span><span>${s.name}</span><span class="z">${s.z.toFixed(3)}</span></div>`
+  : `<div class="d"><span></span><span>${s.name} · ${s.t} mm</span><span class="z">εr ${s.er} · ${s.tand}</span></div>`).join("");
+
+const fams = [...new Set(D.layers.map(L => L.fam))];
+const famColor = Object.fromEntries(D.layers.map(L => [L.fam, L.color]));
+const famZ = Object.fromEntries(D.layers.filter(L => L.name === L.fam).map(L => [L.fam, L.z]));
+const zmid = (D.zrange[0] + D.zrange[1]) / 2;
+const pz = D.planes.map(P => P.z), outer = new Set(D.planes.filter(P => P.z === Math.min(...pz) || P.z === Math.max(...pz)).map(P => P.name));
+const chks = fams.map(f => [`t-${f}`, `${f} copper`, true]).concat([["t-wire", "Mesh edges", false],
+  ["t-planes", `Planes ${[...outer].join(", ")} (outer)`, true], ["t-inner", "Inner planes", false],
+  ["t-board", "Board (dielectric)", false], ["t-vias", "Vias", true], ["t-ports", "Ports + parts + labels", true]]);
+$("chk").innerHTML = chks.map(([id, lab, on]) => `<label class="chk"><input type="checkbox" id="${id}" ${on ? "checked" : ""}> ${lab}</label>`).join("");
+
+const [x0, x1, y0, y1] = D.bounds;
+function mesh(nodes, tris, z, extra) {
+  return { type: "mesh3d", x: nodes.map(p => p[0]), y: nodes.map(p => p[1]), z: nodes.map(() => z * zs),
+    i: tris.map(q => q[0]), j: tris.map(q => q[1]), k: tris.map(q => q[2]), flatshading: true, ...extra };
+}
+function edges(nodes, tris, z) {
+  const x = [], y = [], zz = [], seen = new Set();
+  for (const t of tris) for (let a = 0; a < 3; a++) {
+    const p = t[a], q = t[(a + 1) % 3], key = p < q ? p * 1e6 + q : q * 1e6 + p;
+    if (seen.has(key)) continue; seen.add(key);
+    x.push(nodes[p][0], nodes[q][0], null); y.push(nodes[p][1], nodes[q][1], null); zz.push(z, z, null);
+  }
+  return { x, y, z: zz };
+}
+function cylinders(vs, n = 10) {
+  const x = [], y = [], z = [], i = [], j = [], k = [];
+  for (const v of vs) {
+    const o = x.length;
+    for (let s = 0; s < n; s++) {
+      const a = 2 * Math.PI * s / n, cx = v.xy[0] + v.r * Math.cos(a), cy = v.xy[1] + v.r * Math.sin(a);
+      x.push(cx, cx); y.push(cy, cy); z.push(v.z0 * zs, v.z1 * zs);
+    }
+    for (let s = 0; s < n; s++) { const a = o + 2 * s, b = o + 2 * ((s + 1) % n); i.push(a, a + 1); j.push(b, b); k.push(a + 1, b + 1); }
+  }
+  return { type: "mesh3d", x, y, z, i, j, k, flatshading: true };
+}
+function walls(Wl) {
+  const x = [], y = [], z = [], i = [], j = [], k = [];
+  for (const [xa, ya, xb, yb] of Wl.seg) {
+    const n = x.length;
+    x.push(xa, xb, xb, xa); y.push(ya, yb, yb, ya); z.push(Wl.z0 * zs, Wl.z0 * zs, Wl.z1 * zs, Wl.z1 * zs);
+    i.push(n, n); j.push(n + 1, n + 2); k.push(n + 2, n + 3);
+  }
+  return { type: "mesh3d", x, y, z, i, j, k, flatshading: true };
+}
+const IDX = {};
+function traces() {
+  const t = []; const add = (name, tr) => { (IDX[name] = IDX[name] || []).push(t.length); t.push(tr); };
+  const B = D.board, n = B.nodes.length, bx = [], by = [], bz = [], bi = [], bj = [], bk = [];
+  for (const zz of [B.z0, B.z1]) for (const p of B.nodes) { bx.push(p[0]); by.push(p[1]); bz.push(zz * zs); }
+  for (const q of B.tris) { bi.push(q[0], q[0] + n); bj.push(q[1], q[1] + n); bk.push(q[2], q[2] + n); }
+  add("board", { type: "mesh3d", x: bx, y: by, z: bz, i: bi, j: bj, k: bk, color: css("--board"), opacity: 0.15, hoverinfo: "skip" });
+  for (const P of D.planes) {
+    const grp = outer.has(P.name) ? "planes" : "inner";
+    add(grp, mesh(D.pmeshes[P.mesh].nodes, D.pmeshes[P.mesh].tris, P.z, { color: css("--plane"), opacity: outer.has(P.name) ? 0.30 : 0.15, hovertemplate: `plane ${P.name}, z ${P.z.toFixed(3)} mm<extra></extra>` }));
+    if (P.holes.length) {
+      const ax = [], ay = [], az = [];
+      for (const [xy, r] of P.holes) { for (let s = 0; s <= 40; s++) { const a = 2 * Math.PI * s / 40; ax.push(xy[0] + r * Math.cos(a)); ay.push(xy[1] + r * Math.sin(a)); az.push(P.z * zs); } ax.push(null); ay.push(null); az.push(null); }
+      add(grp, { type: "scatter3d", mode: "lines", x: ax, y: ay, z: az, line: { color: css("--antipad"), width: 3 }, hoverinfo: "skip" });
+    }
+  }
+  for (const L of D.layers) {
+    add("cu_" + L.fam, mesh(L.nodes, L.tris, L.z, { color: L.color, opacity: 1, lighting: { ambient: 0.95, diffuse: 0.2 },
+      hovertemplate: `${L.name}<br>x %{x:.3f}<br>y %{y:.3f} mm<extra></extra>` }));
+    const dz = (L.z >= zmid ? 1 : -1) * 0.004;
+    add("wire_" + L.fam, { type: "scatter3d", mode: "lines", ...edges(L.nodes, L.tris, (L.z + dz) * zs), line: { color: css("--wire"), width: 1 }, hoverinfo: "skip" });
+  }
+  for (const [name, Wl] of Object.entries(D.walls)) add("cu_" + name, { ...walls(Wl), color: Wl.color, opacity: 1, lighting: { ambient: 0.6, diffuse: 0.6 }, hovertemplate: `${name} side wall<extra></extra>` });
+  for (const [kind, col, lab] of [["antipad", "--antipad", "via through antipads"], ["plane", "--pvia", "via connected to planes"], ["via", "--via", "via"]]) {
+    const vs = D.vias.filter(v => v.kind === kind);
+    if (vs.length) add("vias", { ...cylinders(vs, kind === "antipad" ? 24 : 10), color: css(col), opacity: 1, hovertemplate: lab + "<extra></extra>" });
+  }
+  const off = (z) => (z >= zmid ? 1 : -1);
+  const px = [], py = [], pz = [];
+  for (const p of D.ports) { const zz = (p.z + 0.01 * off(p.z)) * zs; px.push(p.a[0], p.b[0], null); py.push(p.a[1], p.b[1], null); pz.push(zz, zz, null); }
+  add("ports", { type: "scatter3d", mode: "lines", x: px, y: py, z: pz, line: { color: css("--port"), width: 8 }, hoverinfo: "skip" });
+  add("ports", { type: "scatter3d", mode: "text", x: D.ports.map(p => p.a[0]), y: D.ports.map(p => p.a[1]),
+    z: D.ports.map(p => (p.z + 0.35 * off(p.z)) * zs), text: D.ports.map(p => `${p.name} (${p.layer})`),
+    textfont: { family: "Consolas, monospace", size: 13, color: css("--port") }, hoverinfo: "skip" });
+  if (D.parts.length) {
+    const cx = [], cy = [], cz = [];
+    for (const c of D.parts) { const zz = (c.z + 0.02 * off(c.z)) * zs; cx.push(c.a[0], c.b[0], null); cy.push(c.a[1], c.b[1], null); cz.push(zz, zz, null); }
+    add("ports", { type: "scatter3d", mode: "lines", x: cx, y: cy, z: cz, line: { color: css("--part"), width: 10 }, hoverinfo: "skip" });
+    add("ports", { type: "scatter3d", mode: "text", x: D.parts.map(c => (c.a[0] + c.b[0]) / 2), y: D.parts.map(c => (c.a[1] + c.b[1]) / 2 + 0.6),
+      z: D.parts.map(c => (c.z + 0.3 * off(c.z)) * zs), text: D.parts.map(c => c.name),
+      textfont: { family: "Consolas, monospace", size: 12, color: css("--part") }, hoverinfo: "skip" });
+  }
+  return t;
+}
+const W = x1 - x0, zspan = () => (D.zrange[1] - D.zrange[0] + 1) * zs;
+const nc = (x, y, z) => ({ x: (x - (x0 + x1) / 2) / W, y: (y - (y0 + y1) / 2) / W, z: (z - zmid) * zs / W });
+function cam(name) {
+  const c0 = { x: 0, y: 0, z: 0 }, up = { x: 0, y: 0, z: 1 };
+  if (name === "iso") return { eye: { x: -0.55, y: -0.95, z: 0.6 }, center: c0, up };
+  if (name === "top") return { eye: { x: 0, y: -0.001, z: 1.1 }, center: c0, up: { x: 0, y: 1, z: 0 } };
+  if (name === "bot") return { eye: { x: 0, y: -0.001, z: -1.1 }, center: c0, up: { x: 0, y: 1, z: 0 } };
+  if (name === "side") return { eye: { x: 0, y: -1.3, z: 0.02 }, center: c0, up };
+  const f = D.focus[name], c = nc(f[0], f[1], f[2]), d = 0.15;
+  return { eye: { x: c.x - 0.7 * d, y: c.y - d, z: c.z + 0.6 * d }, center: c, up };
+}
+function layout(camera) {
+  const ax = (title) => ({ title: { text: title, font: { size: 12, color: css("--muted") } }, color: css("--muted"),
+    gridcolor: css("--rule"), zerolinecolor: css("--rule"), showbackground: false, showspikes: false });
+  const zr = zspan();
+  return { paper_bgcolor: css("--panel"), font: { color: css("--fg") }, margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, uirevision: "keep",
+    scene: { aspectmode: "manual", aspectratio: { x: 1, y: (y1 - y0) / W, z: zr / W },
+      xaxis: { ...ax("x [mm]"), range: [x0, x1] }, yaxis: { ...ax("y [mm]"), range: [y0, y1] },
+      zaxis: { ...ax(`z ×${zs}`), range: [zmid * zs - zr / 2, zmid * zs + zr / 2], showticklabels: false },
+      camera: camera || cam("iso") } };
+}
+const groups = Object.fromEntries(fams.map(f => [`t-${f}`, ["cu_" + f]]));
+Object.assign(groups, { "t-planes": ["planes"], "t-inner": ["inner"], "t-board": ["board"], "t-vias": ["vias"], "t-ports": ["ports"] });
+function vis() {
+  for (const [id, keys] of Object.entries(groups)) for (const k of keys) if (IDX[k]) Plotly.restyle("plot", { visible: $(id).checked }, IDX[k]);
+  for (const f of fams) if (IDX["wire_" + f]) Plotly.restyle("plot", { visible: $("t-wire").checked && $("t-" + f).checked }, IDX["wire_" + f]);
+}
+function draw(camera) { for (const k in IDX) delete IDX[k]; Plotly.react("plot", traces(), layout(camera), { responsive: true, displaylogo: false }); vis(); }
+const curCam = () => $("plot")._fullLayout?.scene?.camera;
+const views = [["iso", "3D"], ["top", "Top"], ["bot", "Bottom"], ["side", "Side"], ...Object.keys(D.focus).map(k => [k, k])];
+$("views").innerHTML = views.map(([v, lab], i) => `<button id="v-${v}" aria-pressed="${i === 0}">${lab}</button>`).join("");
+if (typeof Plotly === "undefined") {
+  $("err").hidden = false; $("err").textContent = "Plotly did not load (cdn.jsdelivr.net blocked?). Reload to try again.";
+} else {
+  $("zsv").textContent = zs + "×"; draw();
+  chks.forEach(([id]) => $(id).onchange = vis);
+  $("zs").oninput = (e) => { zs = +e.target.value; $("zsv").textContent = zs + "×"; draw(curCam()); };
+  for (const [v] of views) $("v-" + v).onclick = () => {
+    views.forEach(([w]) => $("v-" + w).setAttribute("aria-pressed", String(w === v)));
+    Plotly.relayout("plot", { "scene.camera": cam(v) });
+  };
+}
+</script>
