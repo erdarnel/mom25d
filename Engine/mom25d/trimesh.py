@@ -130,6 +130,14 @@ def _inside_points(geom, d):
     return out
 
 
+def _fixed(x):
+    """A positive number in plain decimal notation for Triangle's switches: Triangle reads only digits and '.', so
+    exponent notation ('a1.125000e-08') ended the area switch at 1.125 and the rest became other switches -- the
+    area bound never applied to SI-unit meshes (decision 37)."""
+    s = f"{x:.20f}".rstrip("0")
+    return s + "0" if s.endswith(".") else s
+
+
 def triangulate_layout(layout, max_cell, edge_cell=None, min_angle=20.0, max_aspect=5.0):
     """(nodes, tris, tri_layer, layer_names, port_cuts) for Mesh."""
     import shapely
@@ -279,7 +287,7 @@ def triangulate_layout(layout, max_cell, edge_cell=None, min_angle=20.0, max_asp
             if drill_geom and interior is not None:  # hole points must avoid the drills
                 cut1 = interior.difference(shapely.union_all(drill_geom))
             passes = [(band, cut1, drills, "pYYQ"),
-                      (interior, band, [], f"pq{min_angle:g}a{amax:.6e}YYQ")]
+                      (interior, band, [], f"pq{min_angle:g}a{_fixed(amax)}YYQ")]
             for keep, cut, extra, opts in passes:
                 if keep is None or keep.is_empty:
                     continue

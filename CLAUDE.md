@@ -753,6 +753,33 @@ Units are SI (metres, Hz); `mm`, `GHz` helpers exported. Time convention e^{jωt
     - `view3d`: plane apertures are now cut out of the displayed planes (`_tri_poly(cut=...)`); before, planes were
       drawn solid and traces over an aperture looked as if they ran over metal.
 
+36. **Vias through a plane opening** (2026-10-15, `mesh.py` `Mesh.via_open_crossings`, `solver.py`
+    `via_impedance(open_seg=)`). A via that passes a plane level without connecting, at a point inside one of that
+    plane's apertures, used to be split per stack section like a via through solid copper: its piece between the
+    two plates got the closed-section TEM radial-wave impedance, whose real part is power lost to an infinite
+    plate pair -- although the via sits in the opening. With gap ports whose stitched pads (and pad vias) lie over
+    an L2 opening this gave 20-45 % missing power and gain at the top of the band on a uniform line. Now such a
+    segment is one piece over its whole span (quasi-static partial inductance, image in the plane below), coupled
+    only to other such segments; the opening's magnetic currents carry the coupling to the plates around it.
+    Ablation on the uniform-line check (L2 plane 75 um under a GCPW sheet, 1.3 mm opening along the line and under
+    the port pads, 25-33 GHz, with decision 37): without this fix 18-36 % missing, |S| > 1 at 33 GHz, 3rd-length
+    prediction |dS| 0.06-0.40; with it 3-10 % missing, S11 = S22 within 0.003, |dS| 0.007-0.06 (same line without
+    L2: 0.05-0.09; with the pad vias over solid L2: 0.05-0.06). `leakage.cavity_leakage` should skip these
+    segments (not done: their TEM power is not physical).
+37. **Triangle area bound never applied** (2026-10-15, `trimesh._fixed`). The interior pass passed its area bound
+    as `a{amax:.6e}` ("a1.125000e-08"); Triangle reads only digits and '.', so the bound was 1.125 m^2 and the
+    rest of the string became other switches. Every `kind="tri"` mesh in SI units had unrefined interiors (only the
+    edge band and min_angle shaped them): copper pours and plane openings got triangles of 1-3 mm^2 at
+    max_cell 0.15-0.2 mm. Copper results were mostly fine (pour currents are smooth; edges were refined); aperture
+    magnetic currents under a 0.44 mm line were not resolved at all. Now `_fixed()` writes plain decimals and
+    max_cell holds. Models get larger at the same max_cell (a P1 line section 3 647 -> 5 317 unknowns at 0.2 mm):
+    choose max_cell for the pours deliberately. Full test suite (114) passes.
+    - Open: an opening over a whole model (all copper + 1 mm) does NOT reproduce the same model without the plane
+      (gap-port line 1.5 mm: S21 phase -26 deg vs -100 deg, |dS| up to 1.08), while a 1.3 mm opening along the
+      line is consistent (eps_eff 2.52 vs 2.52 without the plane). Large openings close (75 um) to dense sheet
+      metal are not yet trustworthy; check the aperture size range before using one (CUT_DZ / DROP, the
+      M-M closed-section kernel, mesh grading are the suspects).
+
 ## Validation baseline (keep these numbers when changing things)
 
 - εr=1 slab vs images: < 1e-6 (relative to 1/4πR), 1–30 GHz.
@@ -870,6 +897,7 @@ reference cases (e.g. coupled lines) before trusting new features.
 
 **From 2026-10-14 (internal ports / aperture models, decision 35):**
 - Root cause of the tan d = 0 internal-port error (kernel path for real-axis poles near the gap).
+- Large plane openings (decision 37 open point) and `leakage.cavity_leakage` skipping vias through openings (36).
 - A port for a line in a plane aperture (CPW over an infinite plane): e.g. a slot port (magnetic-current delta
   source across the aperture between line and plane), or allow a meshed sheet on the same level as a plane
   (today it needs a thin spacer layer).

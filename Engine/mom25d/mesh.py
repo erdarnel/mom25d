@@ -983,6 +983,29 @@ class Mesh:
         self.ap_groups = list(groups)
         self._count()
 
+    def via_open_crossings(self):
+        """Bool per via segment: it passes a plane level (without connecting to it) at a point inside one of that
+        plane's apertures. Such a via runs through an opening, not through a solid plane: the section split of
+        `solver.via_impedance` (closed-section TEM radial wave into an infinite plane pair) does not apply to it."""
+        segs = getattr(self, "via_segments", [])
+        out = np.zeros(len(segs), bool)
+        groups = getattr(self, "ap_groups", [])
+        if not segs or not groups:
+            return out
+        rank = {n: i for i, n in enumerate(self.level_order)}
+        rank["gnd"] = -1
+        for k, g in enumerate(segs):
+            v = self.vias[g["via"]]
+            hi, lo = sorted((rank[g["top"]], rank[g["bottom"]]), reverse=True)
+            for grp in groups:
+                if not any(lo < rank.get(n, -2) < hi for n in grp["planes"]):
+                    continue
+                am = grp["mesh"]
+                if _point_in_tris(am.nodes, am.tris, v.xy):
+                    out[k] = True
+                    break
+        return out
+
     def _containing_cell(self, x, y):
         """Triangles of the grid cell(s) containing (x, y) -- all cells
         touching it if it lies on a grid line, so the attachment stays
@@ -1085,3 +1108,18 @@ class Mesh:
         ax.set_xlabel("x [mm]")
         ax.set_ylabel("y [mm]")
         return pc
+
+
+def _point_in_tris(nodes, tris, p):
+    """True if point p (x, y) lies inside (or on the edge of) any triangle of (nodes, tris)."""
+    a, b, c = nodes[tris[:, 0]], nodes[tris[:, 1]], nodes[tris[:, 2]]
+    p = np.asarray(p, float)
+
+    def cross(u, v, w):
+        return (v[:, 0] - u[:, 0]) * (w[1] - u[:, 1]) - (v[:, 1] - u[:, 1]) * (w[0] - u[:, 0])
+
+    d1, d2, d3 = cross(a, b, p), cross(b, c, p), cross(c, a, p)
+    tol = 1e-18
+    neg = (d1 < -tol) | (d2 < -tol) | (d3 < -tol)
+    pos = (d1 > tol) | (d2 > tol) | (d3 > tol)
+    return bool(np.any(~(neg & pos)))

@@ -99,7 +99,7 @@ def via_inductance(vias, h, k=0.0, spans=None):
     return L
 
 
-def via_impedance(vias, spans, omega, sections):
+def via_impedance(vias, spans, omega, sections, open_seg=None):
     """Impedance matrix [ohm] of the vertical via currents (vector-potential
     part), for via segments in a stack split into sections by PEC planes.
 
@@ -119,6 +119,14 @@ def via_impedance(vias, spans, omega, sections):
     The TEM term is the radial wave a via launches between the planes; its
     real part is power lost to the (infinite) plane cavity. Self terms use
     rho = drill / 2.
+
+    open_seg : bool per segment (Mesh.via_open_crossings): the segment passes a
+    plane inside one of its apertures. Its field there is not that of a via
+    between solid plates (no TEM radial wave into an infinite plane pair at
+    that point; the opening's magnetic currents carry the coupling to the
+    plates around it), so it is not split per section: quasi-static partial
+    inductance over its whole span with an image in the plane below it,
+    coupled only to other such segments (decision 36).
     """
     xy = np.array([v.xy for v in vias], float).reshape(-1, 2)
     rho = np.linalg.norm(xy[:, None] - xy[None], axis=-1)
@@ -126,10 +134,11 @@ def via_impedance(vias, spans, omega, sections):
     spans = np.asarray(spans, float).reshape(-1, 2)
     nv = len(spans)
     Z = np.zeros((nv, nv), complex)
+    op = np.zeros(nv, bool) if open_seg is None else np.asarray(open_seg, bool)
     for zb, zt, k in sections:
         a1 = np.clip(spans[:, 0], zb, zt) - zb  # piece in local coordinates
         a2 = np.clip(spans[:, 1], zb, zt) - zb
-        on = np.nonzero(a2 - a1 > 1e-12 * (zt - zb))[0]
+        on = np.nonzero((a2 - a1 > 1e-12 * (zt - zb)) & ~op)[0]
         if not on.size:
             continue
         a1, a2, r = a1[on], a2[on], rho[np.ix_(on, on)]
@@ -151,6 +160,14 @@ def via_impedance(vias, spans, omega, sections):
                 K = kv(0, np.multiply.outer(r, qn))
                 Zs = Zs + 1j * omega * MU0 / (np.pi * d) * np.einsum("ijn,in,jn->ij", K, c, c)
         Z[np.ix_(on, on)] += Zs
+    o = np.nonzero(op)[0]
+    if o.size:  # through an opening: one piece over the whole span, image in the plane below
+        zref = spans[o, 0].min()
+        p1, p2 = spans[o, 0][:, None] - zref, spans[o, 1][:, None] - zref
+        q1, q2 = p1.T, p2.T
+        r = rho[np.ix_(o, o)]
+        L = _filament_mutual_z(p1, p2, q1, q2, r) + _filament_mutual_z(p1, p2, -q2, -q1, r)
+        Z[np.ix_(o, o)] += 1j * omega * L
     return Z
 
 
@@ -375,6 +392,8 @@ class AssemblyGeometry:
             self.via_spans = None
             if all(via_z.get(n) is not None for g in segs for n in (g["top"], g["bottom"])):
                 self.via_spans = [(via_z[g["bottom"]], via_z[g["top"]]) for g in segs]
+            # segments that pass a plane inside one of its apertures (decision 36)
+            self.via_open = mesh.via_open_crossings() if hasattr(mesh, "via_open_crossings") else None
             ok = b >= 0
             self.Cdiv = sp.csr_matrix((self.cV[ok], (np.nonzero(ok)[0], b[ok])), shape=(nt, nb))
 
@@ -512,7 +531,7 @@ def _via_blocks(geom, greens, IVpad, zs=0.0):
     else:
         vs = getattr(greens, "via_sections", None)
         sections = vs() if vs is not None else [(0.0, greens.h, None)]
-        Zvv += via_impedance(geom.vias, geom.via_spans, omega, sections)
+        Zvv += via_impedance(geom.vias, geom.via_spans, omega, sections, getattr(geom, "via_open", None))
         lengths = np.array([z1 - z0 for z0, z1 in geom.via_spans])
     if zs:
         Zvv += np.diag([zs * l / (np.pi * v.drill) for l, v in zip(lengths, geom.vias)])
