@@ -684,25 +684,9 @@ OpenBLAS with the default 22 threads was about 80× slower for the LU.
 
 ## Limitations and possible extensions
 
-- When losses are on, the attenuation α is fitted freely. De-embedding noise,
-  such as weak surface waves launched by the gaps, can bias α by a few tenths
-  of Np/m around 10 GHz. That is about 0.2–0.5 % in \|S21\|. Longer feed
-  lines, or a larger port `margin`, reduce it.
-
-- Inner planes are solid and infinite: antipads only let vias through (no
-  aperture coupling or barrel-to-plane capacitance), patterned planes or
-  voids are not modelled, and the plane cavity has no edges.
-- Only zero-thickness strips. Vertical via currents are quasi-static
-  (parallel-plate modes between two planes); a full-wave via needs the
-  layered G_A^zz, G_A^zx and G_V terms for vertical currents.
-- Triangle mesh: on Manhattan layouts the grid is still somewhat cheaper
-  (its edge cells reach aspect ~10). Oblique ports need `kind="tri"`.
-- The compressed solver is pure Python/numpy: at N ≈ 10⁴ it is about as
-  fast as dense; its gain is memory (models beyond what a dense Z allows).
-  GMRES needs more iterations at low frequency (MPIE low-frequency
-  conditioning).
-- Each port is a microstrip feed line with a delta gap. Lumped internal
-  ports, and multimode (coupled-line) ports, are not implemented.
+See **[LIMITATIONS.md](LIMITATIONS.md)** (what fails or is not yet trustworthy, its symptom, what to do instead, how to
+check) and **[ASSUMPTIONS.md](ASSUMPTIONS.md)** (what every result assumes: infinite layers, PEC ground, sheet copper,
+quasi-static vias, delta-gap ports, ...). Read both before setting up a model.
 
 ## License
 

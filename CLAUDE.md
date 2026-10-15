@@ -6,6 +6,8 @@ inner PEC planes), with vias between layers and planes. Pure Python/numpy/scipy.
 for the formulation, API and validation table; this file records *why* things
 are the way they are and the traps already hit.
 
+**Before any model: read [LIMITATIONS.md](LIMITATIONS.md) and [ASSUMPTIONS.md](ASSUMPTIONS.md); add new failures to LIMITATIONS.md.**
+
 ## Folder layout (since 2026-10-04)
 
 ```
