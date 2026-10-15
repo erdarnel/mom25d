@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Fix: coincident vias in a closed plane-to-plane section (e.g. a DXF via on a GCPW feed's fence via) divided by
+  zero in `via_impedance`'s TM_n sum; such pairs now count as one barrel (distance = drill radius).
+
 ## 0.2.0 — 2026-10-15
 
 **Results change for existing `kind="tri"` models** (see the first item): re-mesh and expect more unknowns at the

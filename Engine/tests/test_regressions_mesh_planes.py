@@ -103,3 +103,17 @@ def test_full_opening_matches_no_plane():
     S_ref = Solver(m, Stackup(lam, metals=dict(L1=1), top="air"), method="dense",
                    verbose=False).sweep(np.array([29 * GHz]), interp=None).renormalize(50.0)[0]
     assert np.abs(S_open - S_ref).max() < 0.05
+
+
+def test_coincident_vias_between_planes():
+    """Two vias at the same position in a closed (plane-to-plane) section gave rho = 0 and a division by zero in the
+    TM_n sum; they are now treated like one barrel (distance = drill radius): finite and symmetric."""
+    from types import SimpleNamespace
+    from mom25d.solver import via_impedance
+    vias = [SimpleNamespace(xy=(0.0, 0.0), drill=0.152e-3), SimpleNamespace(xy=(0.0, 0.0), drill=0.152e-3),
+            SimpleNamespace(xy=(0.5e-3, 0.0), drill=0.152e-3)]
+    spans = [(0.0, 0.13e-3)] * 3
+    k = 2 * np.pi * 29e9 / 3e8 * np.sqrt(3.06)
+    Z = via_impedance(vias, spans, 2 * np.pi * 29e9, [(0.0, 0.13e-3, k)])
+    assert np.all(np.isfinite(Z)) and np.allclose(Z, Z.T)
+    assert np.allclose(Z[0, 1], Z[0, 0])

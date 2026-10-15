@@ -130,7 +130,12 @@ def via_impedance(vias, spans, omega, sections, open_seg=None):
     """
     xy = np.array([v.xy for v in vias], float).reshape(-1, 2)
     rho = np.linalg.norm(xy[:, None] - xy[None], axis=-1)
-    np.fill_diagonal(rho, [0.5 * v.drill for v in vias])
+    rad = np.array([0.5 * v.drill for v in vias])
+    # coincident vias (e.g. a DXF via on top of a GCPW feed's fence via): treat the pair like one barrel (distance =
+    # drill radius) -- rho = 0 made the closed-section TM_n sum divide by zero (2026-10-15)
+    same = rho < 1e-12
+    rho = np.where(same, np.minimum(rad[:, None], rad[None, :]), rho)
+    np.fill_diagonal(rho, rad)
     spans = np.asarray(spans, float).reshape(-1, 2)
     nv = len(spans)
     Z = np.zeros((nv, nv), complex)
