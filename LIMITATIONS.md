@@ -62,7 +62,7 @@ result assumes anyway (infinite layers, PEC ground, sheet copper, ...) is in [AS
 | Before 2026-10-15 `kind="tri"` meshes ignored `max_cell` in interiors (D37) | Old models: coarse pours; plane openings unresolved | Re-mesh old models; at the same `max_cell` N now grows (~45 % on a line section): choose `max_cell` for pours on purpose |
 | Grid mesh staircases oblique copper | +0.9 mm electrical length on an 8.5 mm 45 deg line | `kind="tri"` |
 | CAD slivers / near-duplicate points | Tiny angles, hanging nodes | Clean the DXF (close polylines, delete zero-length lines); copper snaps to 0.05 edge_cell |
-| No per-piece mesh density (coarse pour, fine strip) | Large N from wide pours | Larger `max_cell`, narrower ground band |
+| Wide pours cost many unknowns since the mesh fix (D37) | Large N from smooth pour interiors | `mesh(size=trimesh.graded_size(...))` (D38): fine near the lines, coarse far away; check S against a uniform mesh once |
 
 ## Size, memory and run time
 

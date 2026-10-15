@@ -138,8 +138,42 @@ def _fixed(x):
     return s + "0" if s.endswith(".") else s
 
 
-def triangulate_layout(layout, max_cell, edge_cell=None, min_angle=20.0, max_aspect=5.0):
-    """(nodes, tris, tri_layer, layer_names, port_cuts) for Mesh."""
+def _refine_to_size(out, size, amax, min_angle, rounds=6):
+    """Refine a Triangle result until every triangle's area is below 0.5 size(centroid)^2 (and amax): Triangle's
+    'r' + per-triangle area bounds, no Steiner points on segments (YY), so the edge band's nodes stay shared."""
+    import triangle
+
+    for _ in range(rounds):
+        V, T = out["vertices"], out["triangles"]
+        P = V[T]
+        area = 0.5 * np.abs((P[:, 1, 0] - P[:, 0, 0]) * (P[:, 2, 1] - P[:, 0, 1])
+                            - (P[:, 2, 0] - P[:, 0, 0]) * (P[:, 1, 1] - P[:, 0, 1]))
+        target = np.minimum(0.5 * np.asarray(size(P.mean(1)), float) ** 2, amax)
+        if np.all(area <= 1.05 * target):
+            break
+        src = dict(vertices=V, triangles=T, triangle_max_area=target)
+        if "segments" in out:
+            src["segments"] = out["segments"]
+        out = triangle.triangulate(src, f"rpq{min_angle:g}aYYQ")
+    return out
+
+
+def graded_size(fine, fine_cell, max_cell, slope=0.3):
+    """Cell size field for `size=`: fine_cell [m] within / at the geometry `fine` (shapely, metres; e.g. the signal
+    copper and port lines), growing by `slope` metres per metre of distance, capped at max_cell."""
+    import shapely
+
+    def f(pts):
+        d = shapely.distance(shapely.points(pts), fine)
+        return np.minimum(fine_cell + slope * d, max_cell)
+    return f
+
+
+def triangulate_layout(layout, max_cell, edge_cell=None, min_angle=20.0, max_aspect=5.0, size=None):
+    """(nodes, tris, tri_layer, layer_names, port_cuts) for Mesh.
+
+    size : optional graded interior: a callable mapping points (n, 2) [m] to the largest cell size there [m]
+           (capped by max_cell), e.g. `graded_size` -- fine near the signal copper, coarse in the far pour."""
     import shapely
     import triangle
     from shapely.geometry import Point, Polygon, box
@@ -297,6 +331,8 @@ def triangulate_layout(layout, max_cell, edge_cell=None, min_angle=20.0, max_asp
                 if hp:
                     pslg["holes"] = np.asarray(hp)
                 out = triangle.triangulate(pslg, opts)
+                if size is not None and keep is interior and "triangles" in out and len(out["triangles"]):
+                    out = _refine_to_size(out, size, amax, min_angle)
                 if "triangles" in out and len(out["triangles"]):
                     lay_nodes.append(out["vertices"])
                     lay_tris.append(out["triangles"] + sum(len(n) for n in lay_nodes[:-1]))

@@ -638,7 +638,8 @@ class Layout:
                 ys.extend(c[:-1][np.abs(d[:, 1]) < tol, 1])
         return xs, ys
 
-    def mesh(self, max_cell, edge_cell=None, snap=None, kind="grid", min_angle=20.0, max_aspect=5.0, like=None):
+    def mesh(self, max_cell, edge_cell=None, snap=None, kind="grid", min_angle=20.0, max_aspect=5.0, like=None,
+             size=None):
         """Mesh the layout.
 
         max_cell   : largest cell size [m]
@@ -652,6 +653,10 @@ class Layout:
         min_angle  : tri: smallest triangle angle [deg] in the interior
         max_aspect : tri: cell aspect ratio in the edge band (edge cells are
                      edge_cell wide and up to max_aspect * edge_cell long)
+        size       : tri: graded interior, a callable points (n, 2) [m] -> largest
+                     cell size there [m] (capped by max_cell), e.g.
+                     trimesh.graded_size(signal_copper, 0.15e-3, 0.8e-3): fine
+                     near the lines, coarse in the far pour (decision 38)
         like       : tri: a Mesh of a slightly different version of this layout;
                      its triangles are re-used with the nodes moved to follow
                      the copper (morph.py: smooth S against geometry changes in
@@ -666,7 +671,7 @@ class Layout:
                 m.morphed = True
                 return m
         if kind == "tri":
-            m = Mesh.from_layout_tri(self, max_cell, edge_cell, min_angle, max_aspect)
+            m = Mesh.from_layout_tri(self, max_cell, edge_cell, min_angle, max_aspect, size=size)
             m.morphed = False
         elif kind == "grid":
             m = Mesh.from_layout(self, max_cell, edge_cell, snap)
@@ -775,14 +780,14 @@ class Mesh:
         return cls(nodes, inv.reshape(tris.shape), layout, xg, yg, np.concatenate(tl), names)
 
     @classmethod
-    def from_layout_tri(cls, layout, max_cell, edge_cell=None, min_angle=20.0, max_aspect=5.0):
+    def from_layout_tri(cls, layout, max_cell, edge_cell=None, min_angle=20.0, max_aspect=5.0, size=None):
         """Unstructured mesh (see trimesh.py): structured port feeds (any
         direction), anisotropic edge bands with aspect <= max_aspect,
         constrained Delaunay interior with all angles >= min_angle."""
         from .trimesh import triangulate_layout
 
         nodes, tris, tl, names, cuts = triangulate_layout(layout, max_cell, edge_cell, min_angle,
-                                                          max_aspect)
+                                                          max_aspect, size=size)
         e = edge_cell
         s_edge = min(max_cell, max_aspect * e) if e else max_cell
         raw = dict(nodes=np.array(nodes, float), tris=np.array(tris, int), tri_layer=np.array(tl, int),

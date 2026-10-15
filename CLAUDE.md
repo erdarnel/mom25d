@@ -783,6 +783,15 @@ Units are SI (metres, Hz); `mm`, `GHz` helpers exported. Time convention e^{jωt
       metal are not yet trustworthy; check the aperture size range before using one (CUT_DZ / DROP, the
       M-M closed-section kernel, mesh grading are the suspects).
 
+38. **Graded interior meshes** (2026-10-15, `trimesh._refine_to_size`, `trimesh.graded_size`, `Layout.mesh(size=)`).
+    After decision 37 the interior bound applies everywhere, so wide pours cost many unknowns where the current is
+    smooth (a 16-port board model went 30 554 -> 59 836 at max_cell 0.2 mm). `size=` takes a cell-size field
+    (points -> metres, capped by max_cell); the interior is refined with Triangle's 'r' and per-triangle area bounds
+    (no Steiner points on segments, so edge-band nodes stay shared) until every triangle is below 0.5 size^2.
+    `graded_size(fine, fine_cell, max_cell, slope)`: fine_cell at the geometry `fine` (e.g. the signal copper
+    buffered 0.5 mm), growing by `slope` per metre. Board model: 59 836 -> 33 261 unknowns (fine 0.15, max 0.8,
+    slope 0.3); a line section 5 317 -> 3 826. Opt-in (size=None: unchanged). Accuracy vs uniform mesh: pending.
+
 ## Validation baseline (keep these numbers when changing things)
 
 - εr=1 slab vs images: < 1e-6 (relative to 1/4πR), 1–30 GHz.
