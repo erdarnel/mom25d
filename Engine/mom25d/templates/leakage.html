@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Parallel-plate leakage map</title>
+__PLOTLY__
+<style>
+  :root { --bg: #111418; --panel: #181c22; --fg: #d8dde3; --muted: #8a939e; --grid: #3a4048; --acc: #ffb454; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 system-ui, sans-serif; }
+  header { padding: 10px 16px 4px; }
+  h1 { font-size: 17px; margin: 0 0 2px; font-weight: 600; }
+  .sub { color: var(--muted); }
+  .bar { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 6px 16px; background: var(--panel);
+         border-top: 1px solid var(--grid); border-bottom: 1px solid var(--grid); }
+  .bar label { color: var(--muted); }
+  select, input { background: #0d1014; color: var(--fg); border: 1px solid var(--grid); border-radius: 4px; padding: 2px 4px; }
+  input[type=range] { width: 260px; vertical-align: middle; }
+  #fval { color: var(--acc); font-weight: 600; min-width: 80px; display: inline-block; }
+  .wrap { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr); gap: 8px; padding: 8px 12px; }
+  .card { background: var(--panel); border: 1px solid var(--grid); border-radius: 6px; padding: 4px; }
+  #map { height: 520px; } #polar { height: 330px; } #budget { height: 330px; } #view3d { height: 640px; }
+  button { background: #0d1014; color: var(--fg); border: 1px solid var(--grid); border-radius: 4px; padding: 2px 10px; cursor: pointer; }
+  button:hover { border-color: var(--acc); }
+  .kpi { display: flex; gap: 18px; padding: 4px 16px; flex-wrap: wrap; }
+  .kpi div b { color: var(--acc); font-size: 15px; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 2px 8px; border-bottom: 1px solid var(--grid); text-align: right; }
+  th { color: var(--muted); font-weight: 500; } td:first-child, th:first-child { text-align: left; }
+  .pos { color: #ff7b72; } .neg { color: #79c0ff; }
+  .notes { color: var(--muted); padding: 4px 16px 14px; max-width: 1300px; }
+  .notes li { margin: 2px 0; }
+</style>
+</head>
+<body>
+<header><h1 id="title"></h1><div class="sub" id="subtitle"></div></header>
+<div class="bar">
+  <span><label>Case</label> <select id="case"></select></span>
+  <span><label>Driven port</label> <select id="port"></select></span>
+  <span><label>Cavity</label> <select id="cav"></select></span>
+  <span><label>Frequency</label> <input type="range" id="freq" min="0" max="0" step="1" value="0"> <span id="fval"></span></span>
+  <span><label><input type="checkbox" id="showcu" checked> copper</label></span>
+</div>
+<div class="kpi" id="kpi"></div>
+<div class="wrap">
+  <div class="card"><div id="map"></div></div>
+  <div>
+    <div class="card"><div id="polar"></div></div>
+    <div class="card" style="margin-top:8px"><div id="budget"></div></div>
+  </div>
+</div>
+<div class="wrap" style="grid-template-columns: 1fr;">
+  <div class="card" style="padding:8px"><b>3-D view, x / y / z to scale</b>
+    <span class="sub"> (orthographic; cavity voltage drawn mid-way between its planes, vias coloured by their share)</span>
+    &nbsp; <button id="meshbtn">Show mesh</button>
+    <label class="sub"><input type="checkbox" id="show_planes" checked> planes</label>
+    <label class="sub"><input type="checkbox" id="show_gnd" checked> ground</label>
+    <label class="sub"><input type="checkbox" id="show_cav" checked> cavity voltage</label>
+    <label class="sub"><input type="checkbox" id="show_cu3" checked> copper</label>
+    <div id="view3d"></div></div>
+</div>
+<div class="wrap" style="grid-template-columns: 1fr;">
+  <div class="card" style="padding:8px"><b>Per-via share of the incident power</b>
+    <span class="sub"> (positive: the via launches power into the cavity; negative: it takes power back, i.e. shields)</span>
+    <div style="max-height:260px; overflow:auto"><table id="tab"></table></div></div>
+</div>
+<ul class="notes" id="notes"></ul>
+<script>
+const D = __DATA__;
+const $ = id => document.getElementById(id);
+const L = { paper_bgcolor: "#181c22", plot_bgcolor: "#111418", font: { color: "#d8dde3", size: 12 },
+            margin: { l: 55, r: 20, t: 30, b: 45 } };
+const AX = { gridcolor: "#3a4048", zerolinecolor: "#3a4048", linecolor: "#3a4048" };
+const CU = ["#c8792b", "#4fa3d9", "#9ccc65", "#ba68c8", "#e57373"];
+const st = { c: 0, p: 0, k: 0, f: 0 };
+$("title").textContent = D.title; $("subtitle").textContent = D.subtitle;
+D.notes.forEach(n => { const li = document.createElement("li"); li.textContent = n; $("notes").appendChild(li); });
+D.cases.forEach((c, i) => $("case").add(new Option(c.label, i)));
+
+function dec(b64) { const s = atob(b64), a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
+function db(x) { return 10 * Math.log10(Math.max(Math.abs(x), 1e-12)); }
+function pct(x) { return (100 * x).toFixed(Math.abs(x) < 0.01 ? 3 : 2) + " %"; }
+const C = () => D.cases[st.c];
+const E = () => C().data[st.f][st.p];
+const K = () => E().cavities[st.k];
+
+function caseMax(c) {   // colour range of the map: max over the case, per cavity index
+  let m = -1e9; c.data.forEach(fr => fr.forEach(e => e.cavities.forEach(v => { m = Math.max(m, 20 * Math.log10(v.umax)); })));
+  return m;
+}
+
+function fillSelectors() {
+  const c = C();
+  $("port").innerHTML = ""; c.ports.forEach((p, i) => $("port").add(new Option(p, i)));
+  $("port").value = Math.min(st.p, c.ports.length - 1); st.p = +$("port").value;
+  $("freq").max = c.f.length - 1; st.f = Math.min(st.f, c.f.length - 1); $("freq").value = st.f;
+  const cav = c.data[0][0].cavities;
+  $("cav").innerHTML = ""; cav.forEach((v, i) => $("cav").add(new Option(v.name, i)));
+  st.k = Math.min(st.k, Math.max(cav.length - 1, 0)); $("cav").value = st.k;
+}
+
+function drawMap() {
+  const c = C(), e = E(), k = K(), g = c.grid, traces = [], shapes = [];
+  const zmax = caseMax(c), zmin = zmax - D.floor;
+  if (k) {
+    const q = dec(k.u), top = 20 * Math.log10(k.umax), z = [];
+    for (let j = 0; j < g.ny; j++) { const row = new Array(g.nx);
+      for (let i = 0; i < g.nx; i++) row[i] = top + q[j * g.nx + i] / 250 * D.floor - D.floor;
+      z.push(row); }
+    const xs = Array.from({ length: g.nx }, (_, i) => g.x0 + (i + 0.5) * g.dx);
+    const ys = Array.from({ length: g.ny }, (_, j) => g.y0 + (j + 0.5) * g.dx);
+    traces.push({ type: "heatmap", x: xs, y: ys, z: z, zmin: zmin, zmax: zmax, colorscale: [[0, "#000004"], [0.13, "#1b0c41"], [0.25, "#4a0c6b"], [0.38, "#781c6d"], [0.5, "#a52c60"], [0.63, "#cf4446"], [0.75, "#ed6925"], [0.88, "#fb9b06"], [1, "#fcffa4"]], zsmooth: "best",
+      colorbar: { title: { text: "|U| dB re V<sub>inc</sub>", side: "right" }, len: 0.9, thickness: 12 },
+      hovertemplate: "x %{x:.2f} mm<br>y %{y:.2f} mm<br>|U| %{z:.1f} dB<extra>cavity voltage</extra>" });
+  }
+  if ($("showcu").checked) Object.entries(c.copper).forEach(([name, rings], li) => {
+    const xs = [], ys = [];
+    rings.forEach(r => { xs.push(...r[0], null); ys.push(...r[1], null); });
+    traces.push({ type: "scatter", mode: "lines", x: xs, y: ys, name: name, line: { color: CU[li % CU.length], width: 1.2 },
+                  hoverinfo: "skip" });
+  });
+  const pv = k ? k.p_via : c.vias.map(() => 0);
+  const vmax = Math.max(1e-9, ...pv.map(Math.abs));
+  const on = c.vias.map((v, i) => i).filter(i => !k || pv[i] !== 0 || true);
+  traces.push({ type: "scatter", mode: "markers", name: "vias",
+    x: on.map(i => c.vias[i].xy[0]), y: on.map(i => c.vias[i].xy[1]),
+    marker: { size: on.map(i => Math.max(9, 4 + 60 * Math.sqrt(Math.abs(pv[i]) / vmax) * 0.3)), color: on.map(i => pv[i] * 100),
+              cmin: -100 * vmax, cmax: 100 * vmax, cmid: 0,
+              colorscale: [[0, "#1f6feb"], [0.5, "#d8dde3"], [1, "#f85149"]], line: { color: "#000", width: 1 },
+              colorbar: { title: { text: "via %", side: "right" }, x: 1.13, len: 0.9, thickness: 10 } },
+    customdata: on.map(i => [c.vias[i].span, c.vias[i].kind, pct(pv[i]), e.i_via[i].toFixed(3)]),
+    hovertemplate: "via %{customdata[1]} %{customdata[0]}<br>leak %{customdata[2]}<br>|I| / I<sub>inc</sub> %{customdata[3]}<extra></extra>" });
+  c.vias.forEach(v => shapes.push({ type: "circle", xref: "x", yref: "y", x0: v.xy[0] - v.r, x1: v.xy[0] + v.r,
+    y0: v.xy[1] - v.r, y1: v.xy[1] + v.r, line: { color: "#ffffff", width: 0.8 } }));
+  Plotly.react("map", traces, { ...L, title: { text: k ? `Cavity ${k.name}: voltage and per-via leakage` : "No cavity", font: { size: 13 } },
+    xaxis: { ...AX, title: "x (mm)", scaleanchor: "y", scaleratio: 1 }, yaxis: { ...AX, title: "y (mm)" },
+    legend: { orientation: "h", y: -0.12 }, shapes: shapes, margin: { l: 55, r: 90, t: 30, b: 45 } }, { responsive: true });
+}
+
+function drawPolar() {
+  const c = C(), k = K();
+  if (!k) { Plotly.react("polar", [], { ...L }); return; }
+  const r = k.pattern.map(v => v * 100 * Math.PI / 180);   // % of incident power per degree
+  Plotly.react("polar", [{ type: "scatterpolar", r: r, theta: c.phi, mode: "lines", fill: "toself",
+    line: { color: "#ffb454" }, hovertemplate: "%{theta:.0f}°: %{r:.4f} %/deg<extra></extra>" }],
+    { ...L, title: { text: "Where the cavity power goes (% of P<sub>inc</sub> per degree)", font: { size: 12 } },
+      polar: { bgcolor: "#111418", radialaxis: { gridcolor: "#3a4048", color: "#8a939e" },
+               angularaxis: { gridcolor: "#3a4048", color: "#8a939e", direction: "counterclockwise", rotation: 0 } },
+      margin: { l: 30, r: 30, t: 40, b: 25 } }, { responsive: true });
+}
+
+function drawBudget() {
+  const c = C(), keys = Object.keys(c.data[0][st.p].budget), cols = ["#3fb950", "#8b949e", "#f85149", "#ff7b72", "#d29922", "#a371f7"];
+  const tr = keys.map((key, i) => ({ type: "scatter", mode: "lines+markers", name: key, x: c.f,
+    y: c.f.map((_, fi) => 100 * Math.abs(c.data[fi][st.p].budget[key])),
+    marker: { size: 4 },
+    line: { width: key.startsWith("cavity") ? 2.5 : 1.5, color: key.startsWith("cavity") ? cols[2 + (i % 3)] : key === "reflected" ? "#8b949e" :
+            key.startsWith("other") ? "#a371f7" : "#3fb950" },
+    hovertemplate: key + ": %{y:.3f} %<extra></extra>" }));
+  Plotly.react("budget", tr, { ...L, title: { text: `Power budget, ${c.ports[st.p]} driven`, font: { size: 12 } },
+    xaxis: { ...AX, title: "f (GHz)" }, yaxis: { ...AX, title: "% of P<sub>inc</sub> (log, |value|)", type: "log", range: [-3, 2.05] },
+    shapes: [{ type: "line", x0: c.f[st.f], x1: c.f[st.f], y0: 0, y1: 1, yref: "paper", line: { color: "#ffb454", dash: "dot" } }],
+    legend: { orientation: "h", y: -0.3, font: { size: 10 } }, margin: { l: 55, r: 15, t: 30, b: 80 } }, { responsive: true });
+}
+
+function drawTable() {
+  const c = C(), e = E(), k = K();
+  const pv = k ? k.p_via : c.vias.map(() => 0);
+  const idx = c.vias.map((_, i) => i).filter(i => pv[i] !== 0).sort((a, b) => Math.abs(pv[b]) - Math.abs(pv[a]));
+  let h = "<tr><th>via</th><th>x mm</th><th>y mm</th><th>span</th><th>leak % P<sub>inc</sub></th><th>dB re P<sub>inc</sub></th><th>|I| / I<sub>inc</sub></th></tr>";
+  idx.forEach(i => { const v = c.vias[i], p = pv[i];
+    h += `<tr><td>${i} (${v.kind})</td><td>${v.xy[0].toFixed(3)}</td><td>${v.xy[1].toFixed(3)}</td><td>${v.span}</td>` +
+         `<td class="${p > 0 ? "pos" : "neg"}">${(100 * p).toFixed(4)}</td><td>${db(p).toFixed(1)}</td><td>${e.i_via[i].toFixed(3)}</td></tr>`; });
+  $("tab").innerHTML = h;
+}
+
+function drawKpi() {
+  const c = C(), e = E(), b = e.budget;
+  const cav = e.cavities.reduce((s, v) => s + v.power, 0);
+  const items = [["f", c.f[st.f].toFixed(3) + " GHz"], ["all cavities", pct(cav) + " (" + db(cav).toFixed(1) + " dB)"]];
+  e.cavities.forEach(v => items.push(["cavity " + v.name, pct(v.power)]));
+  Object.entries(b).forEach(([kk, v]) => { if (!kk.startsWith("cavity")) items.push([kk, pct(v)]); });
+  $("kpi").innerHTML = items.map(([a, v]) => `<div><span class="sub">${a}</span><br><b>${v}</b></div>`).join("");
+  $("fval").textContent = c.f[st.f].toFixed(3) + " GHz";
+}
+
+
+// ------------------------------------------------------------------ 3-D view (true 1:1:1 scale, orthographic)
+const INF = [[0, "#000004"], [0.13, "#1b0c41"], [0.25, "#4a0c6b"], [0.38, "#781c6d"], [0.5, "#a52c60"], [0.63, "#cf4446"],
+             [0.75, "#ed6925"], [0.88, "#fb9b06"], [1, "#fcffa4"]];
+let showMesh = false, cam3d = null;
+function flatMesh(nodes, tris, z, color, name, opacity) {
+  return { type: "mesh3d", name: name, x: nodes.map(p => p[0]), y: nodes.map(p => p[1]), z: nodes.map(() => z),
+    i: tris.map(t => t[0]), j: tris.map(t => t[1]), k: tris.map(t => t[2]), color: color, opacity: opacity,
+    flatshading: true, lighting: { ambient: 0.9, diffuse: 0.2, specular: 0 }, hoverinfo: "name", showlegend: true };
+}
+function meshLines(nodes, tris, z, name) {
+  const seen = new Set(), xs = [], ys = [], zs = [];
+  tris.forEach(t => [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]].forEach(([a, b]) => {
+    const key = a < b ? a + "," + b : b + "," + a; if (seen.has(key)) return; seen.add(key);
+    xs.push(nodes[a][0], nodes[b][0], null); ys.push(nodes[a][1], nodes[b][1], null); zs.push(z, z, null); }));
+  return { type: "scatter3d", mode: "lines", name: name + " mesh", x: xs, y: ys, z: zs,
+           line: { color: "#0b0d10", width: 1 }, hoverinfo: "skip", showlegend: false };
+}
+function viaCylinders(segs, pv, vmax) {
+  const N = 16, x = [], y = [], z = [], I = [], J = [], K = [], c = [], txt = [];
+  segs.forEach((s, n) => {
+    const b = x.length;
+    for (let r = 0; r < 2; r++) for (let q = 0; q < N; q++) {
+      const a = 2 * Math.PI * q / N;
+      x.push(s.xy[0] + s.r * Math.cos(a)); y.push(s.xy[1] + s.r * Math.sin(a)); z.push(r ? s.z1 : s.z0);
+      c.push(100 * pv[n]); txt.push(`via ${n}: ${pct(pv[n])}`);
+    }
+    for (let q = 0; q < N; q++) { const q1 = (q + 1) % N;
+      I.push(b + q, b + q1); J.push(b + q1, b + N + q1); K.push(b + N + q, b + N + q);
+      if (q > 0 && q < N - 1) { I.push(b, b + N); J.push(b + q, b + N + q); K.push(b + q1, b + N + q1); } }
+  });
+  return { type: "mesh3d", name: "vias", x: x, y: y, z: z, i: I, j: J, k: K, intensity: c, text: txt,
+    cmin: -100 * vmax, cmax: 100 * vmax, colorscale: [[0, "#1f6feb"], [0.5, "#d8dde3"], [1, "#f85149"]],
+    showscale: false, flatshading: true, hovertemplate: "%{text}<extra></extra>", lighting: { ambient: 0.7, diffuse: 0.6 } };
+}
+function draw3d() {
+  const c = C(), sc = c.scene, k = K(), tr = [];
+  if (!sc) return;
+  if ($("show_cu3").checked) sc.layers.forEach(l => {
+    tr.push(flatMesh(l.nodes, l.tris, l.z, l.color, "copper " + l.name, 1.0));
+    if (showMesh) tr.push(meshLines(l.nodes, l.tris, l.z, l.name));
+  });
+  if ($("show_planes").checked) sc.planes.forEach(p => {
+    const m = sc.pmeshes[p.mesh]; tr.push(flatMesh(m.nodes, m.tris, p.z, "#9aa4ae", "plane " + p.name, 0.35)); });
+  if ($("show_gnd").checked) tr.push(flatMesh(sc.board.nodes, sc.board.tris, 0, "#4a5058", "ground", 1.0));
+  const pv = k ? k.p_via : c.vias.map(() => 0);
+  const vmax = Math.max(1e-9, ...pv.map(Math.abs));
+  if (sc.segs.length) tr.push(viaCylinders(sc.segs, pv, vmax));
+  if (k && $("show_cav").checked) {
+    const g = c.grid, q = dec(k.u), top = 20 * Math.log10(k.umax), zmax = caseMax(c);
+    const st2 = Math.max(1, Math.ceil(Math.sqrt(g.nx * g.ny / 40000)));   // keep the surface light
+    const xs = [], ys = [], col = [], zz = [], zc = 0.5 * (k.z[0] + k.z[1]);
+    for (let i = 0; i < g.nx; i += st2) xs.push(g.x0 + (i + 0.5) * g.dx);
+    for (let j = 0; j < g.ny; j += st2) { ys.push(g.y0 + (j + 0.5) * g.dx);
+      const row = [], zr = []; for (let i = 0; i < g.nx; i += st2) { row.push(top + q[j * g.nx + i] / 250 * D.floor - D.floor); zr.push(zc); }
+      col.push(row); zz.push(zr); }
+    tr.push({ type: "surface", name: "cavity |U|", x: xs, y: ys, z: zz, surfacecolor: col, cmin: zmax - D.floor, cmax: zmax,
+      colorscale: INF, showscale: false, opacity: 1, hovertemplate: "|U| %{surfacecolor:.1f} dB<extra>cavity voltage</extra>",
+      lighting: { ambient: 1, diffuse: 0, specular: 0 }, contours: { x: { highlight: false }, y: { highlight: false }, z: { highlight: false } } });
+  }
+  const ax = t => ({ title: t, backgroundcolor: "#111418", gridcolor: "#3a4048", zerolinecolor: "#3a4048", color: "#8a939e",
+                     showspikes: false });
+  const scene = { aspectmode: "data", xaxis: ax("x (mm)"), yaxis: ax("y (mm)"), zaxis: ax("z (mm)"), bgcolor: "#111418",
+                  camera: cam3d || { projection: { type: "orthographic" }, eye: { x: -0.9, y: -1.5, z: 0.9 } } };
+  scene.camera.projection = { type: "orthographic" };
+  Plotly.react("view3d", tr, { ...L, scene: scene, legend: { orientation: "h", y: 0, font: { size: 10 } },
+                               margin: { l: 0, r: 0, t: 10, b: 0 }, uirevision: "keep" }, { responsive: true }).then(hookCam);
+}
+let camHooked = false;
+function hookCam() {
+  if (camHooked) return; camHooked = true;
+  $("view3d").on("plotly_relayout", e => { if (e["scene.camera"]) cam3d = e["scene.camera"]; });
+}
+$("meshbtn").onclick = () => { showMesh = !showMesh; $("meshbtn").textContent = showMesh ? "Hide mesh" : "Show mesh"; draw3d(); };
+["show_planes", "show_gnd", "show_cav", "show_cu3"].forEach(id => $(id).onchange = draw3d);
+
+function redraw() { drawKpi(); drawMap(); drawPolar(); drawBudget(); drawTable(); draw3d(); }
+$("case").onchange = () => { st.c = +$("case").value; fillSelectors(); redraw(); };
+$("port").onchange = () => { st.p = +$("port").value; redraw(); };
+$("cav").onchange = () => { st.k = +$("cav").value; redraw(); };
+$("freq").oninput = () => { st.f = +$("freq").value; redraw(); };
+$("showcu").onchange = drawMap;
+fillSelectors(); st.f = C().f.length - 1; $("freq").value = st.f; redraw();
+</script>
+</body>
+</html>

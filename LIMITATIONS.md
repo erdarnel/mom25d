@@ -44,7 +44,6 @@ result assumes anyway (infinite layers, PEC ground, sheet copper, ...) is in [AS
 | **Large plane openings** (an opening over a whole model) (D37 open point) | Does not reproduce the same model without the plane (|dS| ~1, S21 phase far off) | Openings along a line validated up to 4.5 mm wide (passive, S11 = S22, third-length \|dS\| 0.04-0.07; 1.3 mm: 0.007-0.06); an opening over a whole model fails. Test the size you need on a straight line first |
 | Openings must have their **own fine mesh** (D33, D37) | eps_eff / Z0 off by 0.1-3 ohm with coarse cells | `add_aperture(max_cell=, edge_cell=)` with several cells across the slot (meshes before 2026-10-15 ignored max_cell inside openings) |
 | **Thick planes** (two faces sharing one M) disabled (D33) | Z0 4 ohm low for an 18 um foil | Zero-thickness planes |
-| `leakage.cavity_leakage` counts vias through openings as cavity sources (D36) | Spurious cavity power | Skip those segments (`Mesh.via_open_crossings`) — not done yet |
 | Planes are infinite: **no cavity / board-edge resonances** (D18) | Agrees with an absorbing-boundary reference, not a real board | Cavity model or openEMS for board-level resonances |
 
 ## Vias

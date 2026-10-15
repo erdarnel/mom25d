@@ -164,3 +164,31 @@ def test_plane_transition_vs_openems(stitch):
     else:
         assert np.all((lost > 0.6 * lost_ref) & (lost < 1.1 * lost_ref))
         assert lost[1] > 0.04
+
+
+def test_cavity_leakage_power_balance():
+    """Power the vias launch into the L2 / gnd cavity (leakage.py) carries the
+    lost power of the lossless transition without stitching (the rest is
+    radiation from the open top); per-via shares and the angular pattern add
+    up to the total; four stitching vias suppress it."""
+    from mom25d.leakage import cavity_leakage
+
+    f = np.array([7.5e9, 15e9])
+    for stitch in (False, True):
+        sol = Solver(_transition(stitch), plane_stack(), verbose=False)
+        r = sol.sweep(f, keep_currents=True)
+        S = r.renormalize(50)
+        for fi, fr in enumerate(f):
+            x = r.wave_currents(fi, [1.0, 0.0])
+            cav = cavity_leakage(sol, x, fr)
+            assert len(cav) == 1 and cav[0].z == pytest.approx((0, 2 * H))
+            c = cav[0]
+            p = c.power / 0.5
+            lost = 1 - np.sum(np.abs(S[fi][:, 0]) ** 2)
+            phi = np.linspace(0, 2 * np.pi, 2001)[:-1]
+            assert np.sum(c.pattern(phi)) * (phi[1] - phi[0]) == pytest.approx(c.power, rel=0.02, abs=5e-4)  # J0(k a) self terms: 0.1 % P_inc
+            assert c.p_via.sum() == pytest.approx(c.power, rel=1e-12)
+            if stitch:
+                assert abs(p) < 1e-3
+            else:
+                assert 0.85 * lost < p < lost

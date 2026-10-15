@@ -767,8 +767,8 @@ Units are SI (metres, Hz); `mm`, `GHz` helpers exported. Time convention e^{jωt
     Ablation on the uniform-line check (L2 plane 75 um under a GCPW sheet, 1.3 mm opening along the line and under
     the port pads, 25-33 GHz, with decision 37): without this fix 18-36 % missing, |S| > 1 at 33 GHz, 3rd-length
     prediction |dS| 0.06-0.40; with it 3-10 % missing, S11 = S22 within 0.003, |dS| 0.007-0.06 (same line without
-    L2: 0.05-0.09; with the pad vias over solid L2: 0.05-0.06). `leakage.cavity_leakage` should skip these
-    segments (not done: their TEM power is not physical).
+    L2: 0.05-0.09; with the pad vias over solid L2: 0.05-0.06). `leakage.cavity_leakage` skips these segments
+    (their TEM power would not be physical).
 37. **Triangle area bound never applied** (2026-10-15, `trimesh._fixed`). The interior pass passed its area bound
     as `a{amax:.6e}` ("a1.125000e-08"); Triangle reads only digits and '.', so the bound was 1.125 m^2 and the
     rest of the string became other switches. Every `kind="tri"` mesh in SI units had unrefined interiors (only the
@@ -900,7 +900,7 @@ reference cases (e.g. coupled lines) before trusting new features.
 
 **From 2026-10-14 (internal ports / aperture models, decision 35):**
 - Root cause of the tan d = 0 internal-port error (kernel path for real-axis poles near the gap).
-- Large plane openings (decision 37 open point) and `leakage.cavity_leakage` skipping vias through openings (36).
+- Large plane openings (decision 37 open point).
 - A port for a line in a plane aperture (CPW over an infinite plane): e.g. a slot port (magnetic-current delta
   source across the aperture between line and plane), or allow a meshed sheet on the same level as a plane
   (today it needs a thin spacer layer).
