@@ -50,7 +50,7 @@ __PLOTLY__
   <span><label>Corner</label> <select id="corner"></select></span>
   <span><label>Chain</label> <select id="chain"></select></span>
   <span id="kinds"></span>
-  <span><label>Arrows</label> <input type="number" id="narrow" min="0" max="200" value="12" style="width:50px"></span>
+  <span><label>Arrows per layer</label> <input type="number" id="narrow" min="0" max="200" value="12" style="width:50px"></span>
   <span><label><input type="checkbox" id="showcu" checked> copper</label></span>
   <button id="reset">Reset zoom</button>
   <span id="links"></span>
@@ -201,15 +201,16 @@ function drawMaps(R) {
     }
   });
   const n = +$('narrow').value;
-  const shown = R.slice(0, n);
-  if (selRow && !shown.includes(selRow)) shown.push(selRow);
-  for (const r of shown) arrow(r, r === selRow);
+  for (const L of D.layers) {            // the n worst loops of each layer (cavity loops count on every layer)
+    const shown = R.filter(r => r.k === 2 || r.layer === L).slice(0, n);
+    if (selRow && (selRow.k === 2 || selRow.layer === L) && !shown.includes(selRow)) shown.push(selRow);
+    for (const r of shown) arrow(r, r === selRow, L);
+  }
   for (const L in maps) scaleMarks(maps[L]);
 }
-function arrow(r, hl) {
-  const targets = r.k === 2 ? D.layers : [r.layer];
-  for (const L of targets) {
-    const g = maps[L]; if (!g) continue;
+function arrow(r, hl, L) {
+  {
+    const g = maps[L]; if (!g) return;
     const c = hl ? '#ffffff' : KCOL[r.k];
     const ln = el('line', { x1: r.axy[0], y1: -r.axy[1], x2: r.vxy[0], y2: -r.vxy[1], stroke: c, 'stroke-dasharray': r.k === 2 ? '4 3' : '',
       'marker-end': '', 'data-w': hl ? 3 : 1.6, opacity: 0.95 }, g.arr);
