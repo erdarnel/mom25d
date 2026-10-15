@@ -481,6 +481,19 @@ board = dxf.outline(lay["Layer_substrate"]["polygons"])            # closes seam
 Planes cut with keyhole slits come out as polygons with proper holes. Layer
 names, ports and stackup stay in the model's geometry file.
 
+## Oscillation risk screen
+
+`mom25d.oscillation` screens a board with RF gain stages for feedback loops through layout coupling (line-line,
+via radiation, via-to-via through plane-pair cavities) with closed-form upper bounds, per frequency and
+temperature corner, and writes a ranked loop table and an interactive dark-mode viewer:
+
+```
+python -m mom25d.oscillation board_osc.json      # -> oscillation.json / .md / .html
+```
+
+Chains are traced along the copper centre lines of an ODB++ export (or given as points). Config, formulas and
+limits: [Engine/docs/oscillation.md](Engine/docs/oscillation.md).
+
 ## Ports whose line voltage is not valid
 
 For a strip whose return plane is above it (e.g. the lower outer layer of a

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **New: `mom25d.oscillation`** — oscillation risk screen for PCBs with RF gain stages: chains traced along the
+  copper centre lines (ODB++) or given as points, signal level from line loss and part gains (tables, S2P,
+  states, temperature coefficients), loop gain for line-line, via-radiation and plane-cavity couplings at every
+  frequency / temperature corner; JSON, Markdown and a self-contained viewer (`templates/oscillation.html`).
+  Docs `Engine/docs/oscillation.md`; tests `test_oscillation.py`.
+
 - Fix: coincident vias in a closed plane-to-plane section (e.g. a DXF via on a GCPW feed's fence via) divided by
   zero in `via_impedance`'s TM_n sum; such pairs now count as one barrel (distance = drill radius).
 

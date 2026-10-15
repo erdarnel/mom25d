@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Oscillation risk</title>
+__PLOTLY__
+<style>
+  :root { --bg: #111418; --panel: #181c22; --fg: #d8dde3; --muted: #8a939e; --grid: #3a4048; --acc: #ffb454; --hl: #ff4fd8; }
+  body { margin: 0; overflow-x: hidden; background: var(--bg); color: var(--fg); font: 13px/1.4 system-ui, sans-serif; }
+  header { padding: 10px 16px 4px; }
+  h1 { font-size: 17px; margin: 0 0 2px; font-weight: 600; }
+  h2 { font-size: 14px; margin: 4px 4px 6px; font-weight: 600; }
+  .sub { color: var(--muted); }
+  .bar { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 6px 16px; background: var(--panel);
+         border-top: 1px solid var(--grid); border-bottom: 1px solid var(--grid); }
+  .bar label { color: var(--muted); }
+  select, input { background: #0d1014; color: var(--fg); border: 1px solid var(--grid); border-radius: 4px; padding: 2px 4px; }
+  button { background: #0d1014; color: var(--fg); border: 1px solid var(--grid); border-radius: 4px; padding: 2px 10px; cursor: pointer; }
+  button:hover { border-color: var(--acc); }
+  a { color: #79c0ff; }
+  .kpi { display: flex; gap: 22px; padding: 6px 16px; flex-wrap: wrap; align-items: baseline; }
+  .kpi div b { color: var(--acc); font-size: 15px; }
+  #verdict { font-weight: 600; padding: 2px 10px; border-radius: 4px; }
+  .maps { display: grid; gap: 8px; padding: 8px 12px; }
+  .card { background: var(--panel); border: 1px solid var(--grid); border-radius: 6px; padding: 4px; position: relative; }
+  .card svg.map { width: 100%; height: 560px; display: block; cursor: grab; background: #0f1317; }
+  .card svg.map.drag { cursor: grabbing; }
+  .legend { display: flex; align-items: center; gap: 8px; padding: 2px 16px; color: var(--muted); flex-wrap: wrap; }
+  .cbar { width: 260px; height: 12px; border-radius: 3px;
+          background: linear-gradient(90deg, #d73027, #fc8d59, #fee08b, #d9ef8b, #91cf60, #1a9850); }
+  .wrap2 { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 8px; padding: 0 12px 8px; }
+  #levels { height: 430px; }
+  .tbl { max-height: 430px; overflow: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 2px 6px; border-bottom: 1px solid var(--grid); text-align: left; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; cursor: pointer; position: sticky; top: 0; background: var(--panel); }
+  td.num { text-align: right; }
+  tr:hover td { background: #222831; cursor: pointer; }
+  tr.sel td { background: #3a2140; }
+  .notes { color: var(--muted); padding: 4px 16px 14px; max-width: 1400px; }
+  .notes li { margin: 2px 0; }
+  .thr td:first-child { font-weight: 600; }
+  .info { font-size: 12px; }
+  .hint { position: absolute; right: 10px; top: 6px; color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+<header><h1 id="title"></h1><div class="sub" id="subtitle"></div></header>
+<div class="bar">
+  <span><label>Corner</label> <select id="corner"></select></span>
+  <span><label>Chain</label> <select id="chain"></select></span>
+  <span id="kinds"></span>
+  <span><label>Arrows</label> <input type="number" id="narrow" min="0" max="200" value="12" style="width:50px"></span>
+  <span><label><input type="checkbox" id="showcu" checked> copper</label></span>
+  <button id="reset">Reset zoom</button>
+  <span id="links"></span>
+</div>
+<div class="kpi" id="kpi"></div>
+<div class="legend"><span>margin to oscillation (worst loop through the point)</span><span>0 dB</span><div class="cbar"></div>
+  <span>40 dB</span><span style="color:#2e7d32">● no loop</span><span>○ RF vias (worst loop as a source)</span>
+  <span style="color:var(--hl)">→ aggressor (downstream) to victim (upstream), label = loop gain</span></div>
+<div class="maps" id="maps"></div>
+<div class="wrap2">
+  <div class="card"><h2>Signal level along each path</h2><div id="levels"></div></div>
+  <div class="card"><h2>Loops, worst first <span class="sub" id="nrows"></span></h2><div class="tbl"><table id="tbl"></table></div></div>
+</div>
+<div class="notes">
+  <table class="thr" style="width:auto">
+    <tr><td style="color:#ff7b72">&ge; 0 dB</td><td>oscillation possible: change the layout (spacing, shielding, fence vias, gain distribution)</td></tr>
+    <tr><td style="color:#fc8d59">-10 .. 0 dB</td><td>small margin, closed-form couplings too rough to decide: EM window model of that coupling</td></tr>
+    <tr><td style="color:#fee08b">-20 .. -10 dB</td><td>no oscillation; ripple up to about &plusmn;0.9 dB at -20 dB</td></tr>
+    <tr><td style="color:#91cf60">&lt; -20 dB</td><td>low risk</td></tr>
+  </table>
+  <ul>
+    <li>Loop gain = level difference (aggressor downstream - victim upstream, with at least one gain stage between them) + coupling; every loop at its worst phase.</li>
+    <li>Line-line: bare-microstrip quasi-static coupling (no side grounds, so an upper bound for GCPW / via-fenced lines unless a layer's coupling offset was fitted), runs summed coherently; layers are assumed shielded from each other by solid planes.</li>
+    <li>Via radiation: vertical current element with its ground image linking upstream lines (x2 for the electric part), times the ground-via fence transmission. Via cavity: radial parallel-plate wave between signal vias, times both fences.</li>
+    <li>Not modelled: coupling between different chains, bias / control lines, part-internal feedback.</li>
+  </ul>
+  <div class="info" id="info"></div>
+</div>
+<script>
+const D = __DATA__;
+const $ = id => document.getElementById(id);
+const KCOL = ['#ff4fd8', '#5ad1ff', '#ffd75a'];
+const PAL = ['#5ad1ff', '#ffb454', '#91cf60', '#ff7b72', '#c792ea', '#ffd75a', '#7fdbca', '#f78c6c', '#82aaff', '#e6e6e6'];
+let corner = 0, chainSel = -1, selRow = null, sortKey = 'loop', sortDir = -1;
+const kindOn = D.kinds.map(() => true);
+$('title').textContent = D.title;
+$('subtitle').textContent = `${D.chains.length} chains, ${D.layers.length} layers, ${D.corners.length} corners`;
+D.corners.forEach((c, i) => $('corner').add(new Option(c.label, i)));
+$('chain').add(new Option('all', -1));
+D.chains.forEach((c, i) => $('chain').add(new Option(c, i)));
+D.kinds.forEach((k, i) => {
+  const l = document.createElement('label');
+  l.innerHTML = `<input type="checkbox" checked> <span style="color:${KCOL[i]}">${k}</span> `;
+  l.querySelector('input').onchange = e => { kindOn[i] = e.target.checked; update(); };
+  $('kinds').appendChild(l);
+});
+$('links').innerHTML = (D.links || []).map(l => `<a href="${l.href}">${l.label}</a>`).join(' · ');
+
+function col(m) {
+  if (!isFinite(m)) return '#2e7d32';
+  const st = [[0, [215, 48, 39]], [8, [252, 141, 89]], [16, [254, 224, 139]], [24, [217, 239, 139]], [32, [145, 207, 96]], [40, [26, 152, 80]]];
+  const x = Math.max(0, Math.min(40, m));
+  for (let k = 1; k < st.length; k++) if (x <= st[k][0]) {
+    const t = (x - st[k - 1][0]) / (st[k][0] - st[k - 1][0]);
+    const c = st[k - 1][1].map((v, j) => Math.round(v + t * (st[k][1][j] - v)));
+    return `rgb(${c})`;
+  }
+  return 'rgb(26,152,80)';
+}
+function rows() {
+  return D.corners[corner].rows.filter(r => kindOn[r.k] && (chainSel < 0 || r.ch === chainSel));
+}
+
+// ---------------------------------------------------------------- maps
+const NS = 'http://www.w3.org/2000/svg';
+let markerId = 0;
+const maps = {};
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function bboxAll() {
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (const ch of D.chains) { const xy = D.geo[ch].xy;
+    for (let i = 0; i < xy.length; i += 2) { x0 = Math.min(x0, xy[i]); x1 = Math.max(x1, xy[i]); y0 = Math.min(y0, xy[i + 1]); y1 = Math.max(y1, xy[i + 1]); } }
+  const m = 0.05 * Math.max(x1 - x0, y1 - y0) + 1;
+  return [x0 - m, -y1 - m, x1 - x0 + 2 * m, y1 - y0 + 2 * m];
+}
+const HOME = bboxAll();
+$('maps').style.gridTemplateColumns = `repeat(${Math.min(2, D.layers.length)}, minmax(0, 1fr))`;
+D.layers.forEach((L, li) => {
+  const card = document.createElement('div'); card.className = 'card';
+  card.innerHTML = `<h2>${L} <span class="sub">(viewed from the top)</span></h2><span class="hint">wheel: zoom · drag: pan · double-click: reset</span>`;
+  const svg = el('svg', { class: 'map' }, card);
+  const g = { svg, vb: HOME.slice(), cu: el('g', {}, svg), dots: el('g', {}, svg), vias: el('g', {}, svg), arr: el('g', {}, svg) };
+  if (D.copper[L]) el('path', { d: D.copper[L], fill: '#3b444e', 'fill-rule': 'evenodd', transform: 'scale(1,-1)' }, g.cu);
+  maps[L] = g;
+  $('maps').appendChild(card);
+  setVB(g);
+  let drag = null;
+  svg.addEventListener('wheel', e => { e.preventDefault(); const p = toUser(g, e); const s = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+    zoomAll((vb) => [p[0] - (p[0] - vb[0]) * s, p[1] - (p[1] - vb[1]) * s, vb[2] * s, vb[3] * s]); }, { passive: false });
+  svg.addEventListener('mousedown', e => { drag = [e.clientX, e.clientY]; svg.classList.add('drag'); });
+  window.addEventListener('mouseup', () => { drag = null; svg.classList.remove('drag'); });
+  svg.addEventListener('mousemove', e => { if (!drag) return; const r = svg.getBoundingClientRect();
+    const k = Math.max(g.vb[2] / r.width, g.vb[3] / r.height); const dx = (e.clientX - drag[0]) * k, dy = (e.clientY - drag[1]) * k;
+    drag = [e.clientX, e.clientY]; zoomAll(vb => [vb[0] - dx, vb[1] - dy, vb[2], vb[3]]); });
+  svg.addEventListener('dblclick', () => zoomAll(() => HOME.slice()));
+});
+function toUser(g, e) {
+  const r = g.svg.getBoundingClientRect(); const k = Math.max(g.vb[2] / r.width, g.vb[3] / r.height);
+  const cx = g.vb[0] + g.vb[2] / 2, cy = g.vb[1] + g.vb[3] / 2;
+  return [cx + (e.clientX - r.left - r.width / 2) * k, cy + (e.clientY - r.top - r.height / 2) * k];
+}
+function setVB(g) { g.svg.setAttribute('viewBox', g.vb.join(' ')); g.svg.style.setProperty('--u', g.vb[2] / 600); scaleMarks(g); }
+function zoomAll(f) { for (const L in maps) { maps[L].vb = f(maps[L].vb); setVB(maps[L]); } }
+function scaleMarks(g) {
+  const u = Math.max(g.vb[2], g.vb[3]) / 700;
+  g.dots.querySelectorAll('circle').forEach(c => c.setAttribute('r', (c.dataset.l ? 1.5 : 0.8) * u));
+  g.vias.querySelectorAll('circle').forEach(c => c.setAttribute('r', 5 * u));
+  g.arr.querySelectorAll('[data-w]').forEach(c => c.setAttribute('stroke-width', c.dataset.w * u));
+  g.arr.querySelectorAll('text').forEach(c => c.setAttribute('font-size', 13 * u));
+  g.arr.querySelectorAll('circle').forEach(c => c.setAttribute('r', 6 * u));
+}
+$('reset').onclick = () => zoomAll(() => HOME.slice());
+$('showcu').onchange = e => { for (const L in maps) maps[L].cu.style.display = e.target.checked ? '' : 'none'; };
+
+function margins(R) {
+  const m = {}, vm = {};
+  D.chains.forEach(ch => m[ch] = new Float64Array(D.geo[ch].s.length).fill(Infinity));
+  for (const r of R) {
+    const ch = D.chains[r.ch];
+    for (const i of r.agg) m[ch][i] = Math.min(m[ch][i], -r.loop);
+    for (const i of r.vic) m[ch][i] = Math.min(m[ch][i], -r.loop);
+    for (const v of [r.via, r.via2]) if (v) { const k = v[0].toFixed(3) + ',' + v[1].toFixed(3); vm[k] = Math.min(vm[k] ?? Infinity, -r.loop); }
+  }
+  return [m, vm];
+}
+function drawMaps(R) {
+  const [m, vm] = margins(R);
+  for (const L in maps) { const g = maps[L]; g.dots.replaceChildren(); g.vias.replaceChildren(); g.arr.replaceChildren(); }
+  D.chains.forEach((ch, ci) => {
+    if (chainSel >= 0 && ci !== chainSel) return;
+    const G = D.geo[ch];
+    const order = [...G.s.keys()].sort((a, b) => (m[ch][b] - m[ch][a]) || 0);
+    for (const i of order) {
+      const g = maps[D.layers[G.layer[i]]];
+      const c = el('circle', { cx: G.xy[2 * i], cy: -G.xy[2 * i + 1], r: 0.1, fill: col(m[ch][i]) }, g.dots); if (isFinite(m[ch][i])) c.dataset.l = 1;
+    }
+    for (const v of G.vias) {
+      const k = v[0].toFixed(3) + ',' + v[1].toFixed(3);
+      for (const L in maps) {
+        const c = el('circle', { cx: v[0], cy: -v[1], r: 0.3, fill: vm[k] !== undefined ? col(vm[k]) : '#2e7d32', stroke: '#fff', 'stroke-width': 0.04 }, maps[L].vias);
+        const t = el('title', {}, c); t.textContent = `${ch} via (${v[0].toFixed(2)}, ${v[1].toFixed(2)})` + (vm[k] !== undefined ? `, margin ${vm[k].toFixed(1)} dB` : '');
+      }
+    }
+  });
+  const n = +$('narrow').value;
+  const shown = R.slice(0, n);
+  if (selRow && !shown.includes(selRow)) shown.push(selRow);
+  for (const r of shown) arrow(r, r === selRow);
+  for (const L in maps) scaleMarks(maps[L]);
+}
+function arrow(r, hl) {
+  const targets = r.k === 2 ? D.layers : [r.layer];
+  for (const L of targets) {
+    const g = maps[L]; if (!g) continue;
+    const c = hl ? '#ffffff' : KCOL[r.k];
+    const ln = el('line', { x1: r.axy[0], y1: -r.axy[1], x2: r.vxy[0], y2: -r.vxy[1], stroke: c, 'stroke-dasharray': r.k === 2 ? '4 3' : '',
+      'marker-end': '', 'data-w': hl ? 3 : 1.6, opacity: 0.95 }, g.arr);
+        const id = 'mk' + (markerId++);
+    const mk = el('marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 5, markerHeight: 5, orient: 'auto', markerUnits: 'strokeWidth' }, g.arr);
+    el('path', { d: 'M0,0L10,5L0,10Z', fill: c }, mk);
+    ln.setAttribute('marker-end', `url(#${id})`);
+    const t = el('text', { x: r.axy[0], y: -r.axy[1], fill: c, 'font-weight': 700, 'paint-order': 'stroke', stroke: '#0f1317', 'stroke-width': 0, 'data-w': 3 }, g.arr);
+    t.textContent = ` ${r.loop.toFixed(1)} dB`;
+    if (hl) { el('circle', { cx: r.axy[0], cy: -r.axy[1], r: 1, fill: 'none', stroke: '#fff', 'data-w': 2 }, g.arr);
+              el('circle', { cx: r.vxy[0], cy: -r.vxy[1], r: 1, fill: 'none', stroke: '#fff', 'data-w': 2 }, g.arr); }
+  }
+}
+
+// ---------------------------------------------------------------- level plot
+function drawLevels() {
+  const C = D.corners[corner], tr = [];
+  D.chains.forEach((ch, ci) => {
+    if (chainSel >= 0 && ci !== chainSel) return;
+    const G = D.geo[ch];
+    tr.push({ x: G.s, y: C.level[ch], mode: 'lines', name: ch, line: { width: 1.5, color: PAL[ci % PAL.length] }, hovertemplate: `${ch}<br>%{x:.1f} mm<br>%{y:.1f} dB<extra></extra>` });
+    const P = C.parts[ch];
+    tr.push({ x: P.map(p => p.s), y: P.map(p => p.level), mode: 'markers', name: ch + ' parts', showlegend: false,
+      marker: { color: PAL[ci % PAL.length], size: P.map(p => p.active ? 9 : 5), symbol: P.map(p => p.active ? 'triangle-right' : 'circle') },
+      text: P.map(p => `${p.label} ${p.gain >= 0 ? '+' : ''}${p.gain.toFixed(1)} dB`), hovertemplate: `${ch}: %{text}<extra></extra>` });
+  });
+  if (selRow) {
+    const ch = D.chains[selRow.ch], G = D.geo[ch], lv = C.level[ch];
+    const pts = (ids, nm, c) => ({ x: ids.map(i => G.s[i]), y: ids.map(i => lv[i]), mode: 'markers', name: nm, marker: { color: c, size: 6 } });
+    if (selRow.agg.length) tr.push(pts(selRow.agg, 'aggressor', '#ff4fd8'));
+    if (selRow.vic.length) tr.push(pts(selRow.vic, 'victim', '#ffffff'));
+  }
+  Plotly.react('levels', tr, { paper_bgcolor: '#181c22', plot_bgcolor: '#111418', font: { color: '#d8dde3' }, margin: { l: 55, r: 10, t: 30, b: 40 },
+    xaxis: { title: { text: 'distance along the path [mm]' }, gridcolor: '#3a4048', zerolinecolor: '#3a4048' }, yaxis: { title: { text: 'signal level [dB re input]' }, gridcolor: '#3a4048', zerolinecolor: '#3a4048' },
+    legend: { orientation: 'h', y: 1.08 } }, { displaylogo: false, responsive: true });
+}
+
+// ---------------------------------------------------------------- table
+const COLS = [['loop', 'loop [dB]', 1], ['k', 'mechanism'], ['ch', 'chain'], ['layer', 'layer'], ['a', 'aggressor (downstream)'],
+              ['v', 'victim (upstream)'], ['dg', 'level diff [dB]', 1], ['c', 'coupling [dB]', 1], ['note', 'notes']];
+function drawTable(R) {
+  const S = R.slice().sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * sortDir).slice(0, 400);
+  const fmt = (r, k) => k === 'k' ? `<span style="color:${KCOL[r.k]}">${D.kinds[r.k]}</span>` : k === 'ch' ? D.chains[r.ch]
+    : k === 'a' ? `${r.a} (${r.axy[0].toFixed(1)}, ${r.axy[1].toFixed(1)})` : k === 'v' ? `${r.v} (${r.vxy[0].toFixed(1)}, ${r.vxy[1].toFixed(1)})`
+    : typeof r[k] === 'number' ? (k === 'loop' ? `<b style="color:${col(-r.loop)}">${r.loop.toFixed(1)}</b>` : r[k].toFixed(1)) : r[k];
+  $('tbl').innerHTML = '<tr>' + COLS.map(c => `<th data-k="${c[0]}">${c[1]}${sortKey === c[0] ? (sortDir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr>' +
+    S.map((r, i) => `<tr data-i="${i}" class="${r === selRow ? 'sel' : ''}">` + COLS.map(c => `<td class="${c[2] ? 'num' : ''}">${fmt(r, c[0])}</td>`).join('') + '</tr>').join('');
+  $('tbl').querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; sortDir = sortKey === k ? -sortDir : (k === 'loop' ? -1 : 1); sortKey = k; drawTable(rows()); });
+  $('tbl').querySelectorAll('tr[data-i]').forEach(tr => tr.onclick = () => select(S[+tr.dataset.i]));
+  $('nrows').textContent = `(${R.length}${R.length > 400 ? ', 400 shown' : ''})`;
+}
+function select(r) {
+  selRow = selRow === r ? null : r;
+  update(false);
+  if (!selRow) return;
+  const x0 = Math.min(r.axy[0], r.vxy[0]), x1 = Math.max(r.axy[0], r.vxy[0]);
+  const y0 = Math.min(-r.axy[1], -r.vxy[1]), y1 = Math.max(-r.axy[1], -r.vxy[1]);
+  const m = Math.max(3, 0.4 * Math.max(x1 - x0, y1 - y0));
+  zoomAll(() => [x0 - m, y0 - m, x1 - x0 + 2 * m, y1 - y0 + 2 * m]);
+}
+
+// ---------------------------------------------------------------- KPIs
+function kpi(R) {
+  const w = R.length ? R[0].loop : -Infinity;
+  const v = w >= 0 ? ['oscillation possible', '#d73027'] : w > -10 ? ['small margin: EM model needed', '#fc8d59']
+    : w > -20 ? ['no oscillation, visible ripple', '#c9a227'] : ['low risk', '#1a9850'];
+  const cnt = t => R.filter(r => r.loop > t).length;
+  $('kpi').innerHTML = `<div>worst loop <b>${isFinite(w) ? w.toFixed(1) + ' dB' : '-'}</b></div>` +
+    `<div>margin <b>${isFinite(w) ? (-w).toFixed(1) + ' dB' : '-'}</b></div>` +
+    `<div id="verdict" style="background:${v[1]};color:#111">${v[0]}</div>` +
+    `<div>loops above -20 dB <b>${cnt(-20)}</b></div><div>above -10 dB <b>${cnt(-10)}</b></div><div>&ge; 0 dB <b>${R.filter(r => r.loop >= 0).length}</b></div>` +
+    `<div>all loops <b>${R.length}</b></div>`;
+}
+function info() {
+  const L = Object.entries(D.layer_info).map(([n, x]) => `<tr><td>${n}</td><td>${x.h}</td><td>${x.eeff}</td><td>${x.eps}</td><td>${x.z0}</td>` +
+    `<td>${x.loss_db_per_mm} @ ${x.loss_f_ghz} GHz</td><td>${x.kc_ratio}</td><td>${x.coupling_offset_db}</td></tr>`).join('');
+  const C = Object.entries(D.cavities).map(([n, x]) => `<tr><td>${n}</td><td>d ${x.d} mm, &epsilon;r ${x.eps}</td></tr>`).join('');
+  $('info').innerHTML = `<b>Layers</b><table style="width:auto"><tr><th>layer</th><th>h [mm]</th><th>&epsilon;eff</th><th>&epsilon;r</th><th>Z0</th>` +
+    `<th>loss [dB/mm]</th><th>kC/kL</th><th>coupling offset [dB]</th></tr>${L}</table>` + (C ? `<b>Plane-pair cavities</b><table style="width:auto">${C}</table>` : '');
+}
+
+function update(full = true) {
+  const R = rows();
+  if (selRow && !R.includes(selRow)) selRow = null;
+  kpi(R); drawMaps(R); drawTable(R); drawLevels();
+}
+$('corner').onchange = e => { corner = +e.target.value; selRow = null; update(); };
+$('chain').onchange = e => { chainSel = +e.target.value; update(); };
+$('narrow').onchange = () => update();
+info();
+update();
+</script>
+</body>
+</html>
