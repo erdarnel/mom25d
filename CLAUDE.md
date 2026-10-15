@@ -790,7 +790,9 @@ Units are SI (metres, Hz); `mm`, `GHz` helpers exported. Time convention e^{jωt
     (no Steiner points on segments, so edge-band nodes stay shared) until every triangle is below 0.5 size^2.
     `graded_size(fine, fine_cell, max_cell, slope)`: fine_cell at the geometry `fine` (e.g. the signal copper
     buffered 0.5 mm), growing by `slope` per metre. Board model: 59 836 -> 33 261 unknowns (fine 0.15, max 0.8,
-    slope 0.3); a line section 5 317 -> 3 826. Opt-in (size=None: unchanged). Accuracy vs uniform mesh: pending.
+    slope 0.3); a line section 5 317 -> 3 826. Opt-in (size=None: unchanged). Accuracy: the line section's 2-port S
+    (25-33 GHz) differs from the uniform 0.2 mm mesh by max |dS| 0.003 (fine 0.15 / max 0.8) and 0.003 (0.2 / 1.2).
+    `add_aperture(size=)` grades plane openings the same way.
 
 ## Validation baseline (keep these numbers when changing things)
 

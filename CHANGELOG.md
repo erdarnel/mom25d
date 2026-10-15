@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- New: `add_aperture(..., size=)` graded opening meshes; graded meshes checked: max |dS| 0.003 vs uniform on a line section.
+
 - **New: `mom25d.oscillation`** — oscillation risk screen for PCBs with RF gain stages: chains traced along the
   copper centre lines (ODB++) or given as points, signal level from line loss and part gains (tables, S2P,
   states, temperature coefficients), loop gain for line-line, via-radiation and plane-cavity couplings at every
@@ -25,7 +27,7 @@ same `max_cell` and slightly different S. Pin 0.1.0 to reproduce older numbers.
   span. `Mesh.via_open_crossings()`.
 - **New: graded interior meshes** (decision 38): `layout.mesh(..., kind="tri", size=f)` with a cell-size field, e.g.
   `trimesh.graded_size(signal_copper, fine_cell, max_cell, slope)` — fine near the lines, coarse in the far pour.
-  A 16-port board model: 59 836 -> 33 261 unknowns. Opt-in; accuracy check against a uniform mesh pending.
+  A 16-port board model: 59 836 -> 33 261 unknowns. Opt-in.
 - **New: `leakage.py`** — power each via launches into closed plane pairs (per via, total, pattern, voltage map) and a
   self-contained map page; vias through openings are left out.
 - **New: `mom25d.rfpcb`** — config-driven RF PCB cascade workflow (DXF -> circuit, de-embedded line sections, merged

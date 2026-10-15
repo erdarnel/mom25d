@@ -455,7 +455,7 @@ class Layout:
         self._touch()
         return self
 
-    def add_aperture(self, plane, region, max_cell=None, edge_cell=None):
+    def add_aperture(self, plane, region, max_cell=None, edge_cell=None, size=None):
         """Opening (slot, keep-out) of any shape in a solid inner plane:
         `region` a shapely geometry [m]; `plane` a plane name, or (lower,
         upper) for a thick plane modelled by two planes at its faces with
@@ -464,11 +464,12 @@ class Layout:
         own mesh: max_cell / edge_cell [m], default min(layout max_cell,
         2.5 x layout edge_cell) and half the layout edge_cell -- the slot
         field needs several cells across the opening (with the layout's
-        0.3 mm cells a 0.6 mm slot under a CPW gap was 0.16 off in eps_eff)."""
+        0.3 mm cells a 0.6 mm slot under a CPW gap was 0.16 off in eps_eff). `size`: a graded
+        cell-size field as in `mesh(size=)` (fine under the lines, coarse in wide openings)."""
         lo, hi = (plane, plane) if isinstance(plane, str) else tuple(plane)
         for p in (lo, hi):
             self.add_plane(p)
-        self.apertures.append((lo, hi, region, max_cell, edge_cell))
+        self.apertures.append((lo, hi, region, max_cell, edge_cell, size))
         self._touch()
         return self
 
@@ -679,14 +680,14 @@ class Layout:
             raise ValueError("kind must be 'grid' or 'tri'")
         if self.apertures:
             groups = []
-            for lo, hi, region, mc, ec in self.apertures:
+            for lo, hi, region, mc, ec, *sz in self.apertures:
                 sub = Layout()
                 sub.add_polygon(region, layer="aperture")
                 if ec is None:
                     ec = 0.5 * edge_cell if edge_cell else None
                 if mc is None:
                     mc = min(max_cell, 2.5 * edge_cell) if edge_cell else max_cell
-                am = sub.mesh(mc, ec, None, kind, min_angle, max_aspect)
+                am = sub.mesh(mc, ec, None, kind, min_angle, max_aspect, size=sz[0] if sz else None)
                 groups.append(dict(planes=(lo, hi), mesh=am))
             m.set_apertures(groups)
         return m
