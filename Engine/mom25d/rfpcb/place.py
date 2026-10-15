@@ -25,9 +25,12 @@ class Placer:
         self.plane = plane if plane is not None else (self.M.get("plane") or {}).get("name")
         self.d = self.st.edge_delta
         self._void = None
+        self.void_override = None    # local-coordinate void of a reference line (Project.ref_void); None: the DXF voids
 
     # ---------------------------------------------------------------- pieces
     def plane_void(self):
+        if self.void_override is not None:
+            return self.void_override
         if self._void is None:
             lay = self.cfg["layers"]["plane_voids"].format(plane=self.plane)
             self._void = dxfio.voids(self.cfg.dxf, lay)
@@ -120,7 +123,13 @@ class Placer:
             pl = self.M.get("plane") or {}
             lay.add_plane(self.plane)
             allcu = unary_union(rfs + [g] + [poly for poly, _ in pads])
-            ap = self.plane_void().intersection(box(*allcu.bounds).buffer(1.0, join_style="mitre"))
+            vd = self.plane_void()
+            for name, ref, u, w, gap in feeds:   # a feed carries the line on: the plane is voided under it as under the line
+                ref, u = np.asarray(ref, float), np.asarray(u, float)
+                n = np.array([-u[1], u[0]]); h = w / 2 + gap + pl.get("void_margin", 0.05)
+                L = M["feed_length"] + 1.0
+                vd = vd.union(Polygon([ref + h * n, ref - h * n, ref - h * n + L * u, ref + h * n + L * u]))
+            ap = vd.intersection(box(*allcu.bounds).buffer(1.0, join_style="mitre"))
             ap = shapely.make_valid(shapely.set_precision(ap, 0.005).simplify(0.01))
             ap = unary_union([q for q in getattr(ap, "geoms", [ap]) if q.geom_type == "Polygon" and q.area > 2e-3])
             if not ap.is_empty:

@@ -134,3 +134,25 @@ def test_deembed_algebra():
     Xf, r = DE.fit_box(Ms, [DE.tline(z0, gam, L) for L in (1.5, 3.0)])
     pred = DE.a2s(Xf @ DE.tline(z0, gam, 4.5) @ DE.rev(Xf))
     assert r < 1e-8 and np.abs(pred - DE.a2s(X @ DE.tline(z0, gam, 4.5) @ DE.rev(X))).max() < 1e-6
+
+
+@pytest.mark.skipif(not available(), reason="mom25d not importable")
+def test_plane_references(board):
+    """With an inner plane: reference-line voids per port type, feed refs end on a gap port (Z0 by reciprocity), the
+    plane is voided under feeds, and section builds go back to the DXF voids."""
+    from shapely.geometry import box
+    from mom25d.rfpcb.models import Project
+    pr = Project(board.cfg)
+    pr.pl.plane = "L2"
+    pr.pl._void = box(0, 0, 0, 0)          # no DXF L2 in the synthetic board: an empty void
+    pv = pr.ref_void(("pad", W, G, 0.0), 3.0)
+    gv = pr.ref_void(("pour", W, G, 0.3), 3.0)
+    assert pv.bounds[2] > 3.0 / 2 + 1.0 and abs(gv.bounds[2] - (1.5 + 0.30)) < 1e-9
+    assert abs(pv.bounds[3] - (W / 2 + G + 0.05)) < 1e-9
+    lay = pr.feed_ref(("pad", W, G, 0.0))
+    assert [p.name for p in lay.ports] == ["P1"] and [q.name for q in lay.lumped] == ["P2"]
+    assert lay.apertures and lay.apertures[0][2].bounds[0] < -(1.5 + 3.0) * 1e-3   # opening under the feed
+    jobs = pr.jobs()
+    sec_job = next(j for j in jobs if j[0].startswith("sec_"))
+    sec_job[1]()
+    assert pr.pl.void_override is None

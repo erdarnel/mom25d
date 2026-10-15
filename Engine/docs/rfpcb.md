@@ -47,6 +47,10 @@ Every EM run goes through the simulation manager (`rfpcb.jobs.submit`, pre-fligh
 
 ## Known limits
 
+- Inner plane (`model.plane`): its DXF voids become openings; the plane is also voided under GCPW feeds; reference
+  lines get voids like the board's ports of that type (through pads at pad ports, `part_port_void` past drawn gap
+  ports); feed references end on a gap port so Z0 comes from reciprocity (feeds alone give no valid Z0 with
+  openings). Openings along a line are validated up to 4.5 mm wide; one over a whole model is not (LIMITATIONS.md).
 - An L1 ground plane with the line inside its opening does not work in mom25d (even feeds fail with the sheet 2 µm
   above the plane level; at 10 µm eps_eff is +16 %). Inner planes on their own level (an L2 under the pour) are fine
   in principle — validate on a straight line first.

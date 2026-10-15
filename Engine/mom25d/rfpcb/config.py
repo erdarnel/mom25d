@@ -42,7 +42,10 @@ DEFAULTS = {
         "pad_depth": 0.30, "pad_side": 0.10, "pad_via": 0.152,
         "feed_length": 5.0, "fence_pitch": 0.40, "fence_drill": 0.152, "fence_pad": 0.305,
         "edge_cell": 0.03, "max_cell": 0.20,
-        "plane": None,               # e.g. {"name": "L2", "ap_max": 0.15, "ap_edge": 0.04}: inner plane, DXF voids open
+        "plane": None,               # e.g. {"name": "L2", "ap_max": 0.15, "ap_edge": 0.04}: inner plane, DXF voids open;
+                                     # also "void_margin" (0.05 mm past each gap) and "part_port_void" (0.30 mm past a
+                                     # drawn gap port's line) for the reference lines' voids; validated: openings along
+                                     # a line up to 4.5 mm wide (LIMITATIONS.md)
         "merge": [],                 # e.g. [["TL4", "TL5"]]: lines modelled as one (a part with a grounded paddle)
         "complete_band": 5.0,        # ground band of the complete model
     },

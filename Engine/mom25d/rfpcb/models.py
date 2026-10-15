@@ -51,8 +51,29 @@ class Project:
         kind, w, g, slot = key
         return f"{kind}_w{w:.3f}_g{g:.3f}" + (f"_s{slot:.3f}" if slot else "")
 
+    def ref_void(self, key, L, feed=False):
+        """Plane void of a straight reference line (local mm), as at the board's ports of that type: under the line and
+        its gaps (+ margin); through the pads at pad ports and under the whole feed for feed lines; `part_port_void`
+        mm past the port line at drawn gap ports (the void typically ends inside the part's footprint). None without
+        a plane."""
+        if not self.pl.plane:
+            return None
+        pl = self.cfg.m.get("plane") or {}
+        kind, w, g = key[0], key[1], key[2]
+        h = w / 2 + g + pl.get("void_margin", 0.05)
+        ext = self.cfg.m["feed_length"] + 1.0 if (feed or kind == "pad") else pl.get("part_port_void", 0.30)
+        return box(-L / 2 - ext, -h, L / 2 + ext, h)
+
+    def feed_ref(self, key):
+        """GCPW-feed reference line (gamma, Z0). With a plane (apertures) the feed's line voltage is not valid
+        (engine decision 33): the far end is then a pad gap port and Z0 comes from reciprocity with it."""
+        w, g = key[1], key[2]
+        self.pl.void_override = self.ref_void(key, 3.0, feed=True)
+        return self.straight(w, g, 3.0, "feed+pad" if self.pl.plane else "feed")
+
     def straight(self, w, g, L, ports):
-        """Straight line along x, length L between the port lines, ground band either side; ports 'feed' / 'pad'."""
+        """Straight line along x, length L between the port lines, ground band either side; ports 'feed' / 'pad' /
+        'feed+pad' (feed at P1, pad gap port at P2)."""
         m = mom25d()
         band = self.cfg.m["ground_band"]
         rf = box(-L / 2, -w / 2, L / 2, w / 2)
@@ -62,7 +83,7 @@ class Project:
         ends = (("P1", np.array([-L / 2, 0.0]), np.array([-1.0, 0.0])), ("P2", np.array([L / 2, 0.0]), np.array([1.0, 0.0])))
         pads, gp, fd = [], [], []
         for name, p, u in ends:
-            if ports == "feed":
+            if ports == "feed" or (ports == "feed+pad" and name == "P1"):
                 fd.append((name, p, u, w, g))
             else:
                 pad, slot, s0, r0, pv = self.pl.port_geom(p, u, w, g)
@@ -101,6 +122,7 @@ class Project:
 
     def ref_layout(self, key, L):
         kind, w, g, slot = key
+        self.pl.void_override = self.ref_void(key, L)
         if kind == "pad":
             return self.straight(w, g, L, "pad")
         return self.gap_case(w, g, slot, L, joined=(kind == "pour"))
@@ -117,13 +139,15 @@ class Project:
         if include_refs:
             for key in keys:
                 w, g = key[1], key[2]
-                jobs.append((f"ref_feed_w{w:.3f}_g{g:.3f}", lambda w=w, g=g: self.straight(w, g, 3.0, "feed"), (0, 0),
-                             f"reference line 3 mm, GCPW feeds, line {w} / gap {g} mm"))
+                jobs.append((f"ref_feed_w{w:.3f}_g{g:.3f}", lambda key=key: self.feed_ref(key), (0, 0),
+                             f"reference line 3 mm, GCPW feed{' + gap port (Z0 by reciprocity)' if self.pl.plane else 's'}, "
+                             f"line {w} / gap {g} mm"))
                 for L in Ls:
                     jobs.append((f"ref_{self.tag(key)}_L{L}", lambda key=key, L=L: self.ref_layout(key, L), (0, 0),
                                  f"reference line {L} mm, gap ports '{key[0]}' type"))
         for s in secs:
-            jobs.append((f"sec_{s['name']}", lambda s=s: self.pl.build(s)[0], tuple(s["origin"]), f"section {s['name']}"))
+            jobs.append((f"sec_{s['name']}", lambda s=s: (setattr(self.pl, "void_override", None), self.pl.build(s)[0])[1],
+                         tuple(s["origin"]), f"section {s['name']}"))
         seen = set()
         return [j for j in jobs if not (j[0] in seen or seen.add(j[0]))]
 
@@ -159,6 +183,7 @@ class Project:
         """Complete model, H-matrix solver, one file per frequency (currents + port waves kept)."""
         m = mom25d()
         sec = self.b.complete()
+        self.pl.void_override = None
         lay, mesh = self.pl.build(sec, band=self.cfg.m["complete_band"])
         print(f"complete model: N = {mesh.n_unknowns}, {len(sec['vias'])} vias", flush=True)
         sol = m.Solver(mesh, self.b.stack.mom(False, self.pl.plane), method="hmatrix", verbose=True)
