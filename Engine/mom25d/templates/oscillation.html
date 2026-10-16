@@ -231,7 +231,9 @@ function drawLevels() {
   D.chains.forEach((ch, ci) => {
     if (chainSel >= 0 && ci !== chainSel) return;
     const G = D.geo[ch];
-    tr.push({ x: G.s, y: C.level[ch], mode: 'lines', name: ch, line: { width: 1.5, color: PAL[ci % PAL.length] }, hovertemplate: `${ch}<br>%{x:.1f} mm<br>%{y:.1f} dB<extra></extra>` });
+    const lx = [], ly = [];     // parallel branches restart at the split: break the line where s steps back
+    G.s.forEach((x, i) => { if (i && x < G.s[i - 1] - 1e-9) { lx.push(null); ly.push(null); } lx.push(x); ly.push(C.level[ch][i]); });
+    tr.push({ x: lx, y: ly, mode: 'lines', name: ch, line: { width: 1.5, color: PAL[ci % PAL.length] }, hovertemplate: `${ch}<br>%{x:.1f} mm<br>%{y:.1f} dB<extra></extra>` });
     const P = C.parts[ch];
     tr.push({ x: P.map(p => p.s), y: P.map(p => p.level), mode: 'markers', name: ch + ' parts', showlegend: false,
       marker: { color: PAL[ci % PAL.length], size: P.map(p => p.active ? 9 : 5), symbol: P.map(p => p.active ? 'triangle-right' : 'circle') },

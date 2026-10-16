@@ -47,6 +47,18 @@ See the docstring of `oscillation.load` for the full schema. Key points:
 - `channels`: ordered paths of `part`, `line` and `via` items; `repeat` with `{n}` placeholders for identical
   channels. Line endpoints by refdes, `REF.PIN`, part-number prefix (`"ADL8141*"`), `via` / `via:NET` or
   coordinates; `split_at` inserts a part (e.g. a Wilkinson) partway along a traced line.
+- `parallel`: a section of two or more branches between a splitter and a combiner (balanced amplifier pairs,
+  Wilkinson-split stages): `{"parallel": [[branch items], [branch items]], "label": ..., "split_db": ...,
+  "combine_db": ...}`. Each branch is an ordinary path (lines, parts, vias) that starts where the previous line
+  ended, e.g. a line to `U2_1`, the amplifier, a line from `U2_1` on; the other branch the same through `U20_1`.
+  The centre line all branches share at the start (up to the split junction) and at the end (from the combine
+  junction) is taken out as one line. Level: split -10 log10(n) dB by default; the branch end levels combine as an
+  ideal in-phase combiner (sum of amplitudes / sqrt(n)). A signal coupled into one branch reaches the combined
+  output 20 log10(n) dB below the plain level difference (the branch level already carries the -10 log10(n)
+  split, and only 1 / sqrt(n) of one branch's amplitude is combined), so loops whose victim is in a branch and
+  whose aggressor is not in that same branch are reduced by 20 log10(n). Every branch is sampled and searched for
+  loops, also across branches of the same section; the combiner's isolation is not counted there, so those loops
+  are upper bounds (marked in the note). Nested parallel sections are not supported.
 - `corners`: `{"f": [...], "t": [...]}` or a list of `{"f", "t", "states", "label"}`.
 - `links`: `[{"label", "href"}]` shown in the viewer's toolbar (e.g. the layout viewer, the DXF).
 
@@ -61,6 +73,7 @@ assumptions and the layer parameters.
 ## Limits
 
 - Coupling between different chains (e.g. channels that meet in a combiner) is not counted.
+- Loops across branches of a parallel section ignore the isolation of the splitter / combiner.
 - Bias, control and supply lines, part-internal feedback and package coupling are not modelled.
 - Couplings are worst-phase magnitudes; formulas for bare microstrip overestimate fenced / GCPW lines unless
   `coupling_offset_db` is fitted.

@@ -175,14 +175,19 @@ def load(path):
           {"via": {}},
           {"line": "bottom_layer", "net": "LNA_OUT_{n}", "from": "via", "to": "J2*",
            "split_at": [{"part": "wilk2", "near": "R89"}]},
-          {"line": "bottom_layer", "points": [[x, y], ...]}                  (explicit centre line)
+          {"line": "bottom_layer", "points": [[x, y], ...]},                 (explicit centre line)
+          {"parallel": [[{"line": "top_layer", "net": "IN_{n}", "from": "C1*", "to": "U2_{n}"}, {"part": "lna"},
+                         {"line": "top_layer", "net": "OUT_{n}", "from": "U2_{n}", "to": "via"}],
+                        [... the same through U20_{n} ...]], "label": "LNA pair"}   (split / combine sections)
       ]}]
     }
 
     Line endpoints: "REF" (a pin of that refdes on the line's net), "REF.PIN", "PART*" (a pin on the net of a part
     whose part number starts with PART), "via" / "via:NET" (a signal via of the net), or [x, y]. "from" prefers the
     point where the previous line ended (same refdes or via); "to" takes the candidate other than "from" with the
-    shortest centre-line path. A tc_db_per_c is the gain change per degC (negative for a gain that rises cold).
+    shortest centre-line path. In a "parallel" section every branch starts where the previous line ended; the
+    centre line shared by all branches before the split and after the combine is kept once (see `sample` for the
+    levels). A tc_db_per_c is the gain change per degC (negative for a gain that rises cold).
     """
     path = Path(path)
     return Config(json.loads(path.read_text()), path.parent)
@@ -312,65 +317,154 @@ def _same(a, b, tol=0.05):
 
 
 def trace(cfg, board=None):
-    """Chains as lists of items: ("line", layer, P (n, 2), net), ("part", key, label, xy), ("via", xy, opts)."""
-    need = any("line" in e and "points" not in e for c in cfg["channels"] for e in c["path"])
+    """Chains as lists of items: ("line", layer, P (n, 2), net), ("part", key, label, xy), ("via", xy, opts),
+    ("parallel", [branch items, ...], opts) (branches between a split and a combine; lines shared by every branch
+    at the start and end of the parallel section are moved out to the chain as single lines)."""
+    need = any("line" in e and "points" not in e for c in cfg["channels"] for e in _flat_spec(c["path"]))
     if board is None and need:
         board = OdbBoard(cfg)
     chains = {}
     for c in cfg["channels"]:
-        items, prev_xy, prev_tag = [], None, None
-        for e in c["path"]:
-            if "part" in e:
-                if e["part"] not in cfg["parts"]:
-                    raise ValueError(f"{c['name']}: part '{e['part']}' not in parts")
-                items.append(("part", e["part"], e.get("label", e["part"]), prev_xy))
-            elif "via" in e:
-                if prev_xy is None:
-                    raise ValueError(f"{c['name']}: a via must follow a line")
-                items.append(("via", prev_xy, dict(e["via"] or {})))
-            elif "line" in e:
-                layer = e["line"]
-                if layer not in cfg["layers"]:
-                    raise ValueError(f"{c['name']}: layer {layer} not in layers")
-                if "points" in e:
-                    P = np.asarray(e["points"], float)
-                    a_tag = b_tag = None
-                else:
-                    net = e["net"]
-                    ca = board.candidates(e["from"], net)
-                    if not ca:
-                        raise ValueError(f"{c['name']}: no '{e['from']}' on net {net}")
-                    if len(ca) > 1 and prev_xy is not None:
-                        hit = [x for x in ca if _same(x[0], prev_xy) or (prev_tag and x[1] == prev_tag)]
-                        ca = hit or sorted(ca, key=lambda x: np.linalg.norm(x[0] - prev_xy))
-                    elif len(ca) > 1:
-                        raise ValueError(f"{c['name']}: '{e['from']}' on net {net} is ambiguous ({len(ca)} pins)")
-                    a, a_tag = ca[0]
-                    cb = [x for x in board.candidates(e["to"], net) if not _same(x[0], a)
-                          and (x[1] is None or x[1] != a_tag or x[1].startswith("via"))]
-                    if not cb:
-                        raise ValueError(f"{c['name']}: no '{e['to']}' on net {net} other than the start")
-                    cl = board.centreline(layer, net, a)
-                    if len(cb) > 1:
-                        cb = sorted(cb, key=lambda x: cl.length(a, x[0]))
-                    b, b_tag = cb[0]
-                    P = cl.path(a, b)
-                splits = []
-                for s in e.get("split_at", []):
-                    near = s["near"]
-                    xy = (np.array([board.by_ref[near]["x"], board.by_ref[near]["y"]])
-                          if isinstance(near, str) else np.asarray(near, float))
-                    splits.append((int(np.argmin(np.linalg.norm(P - xy, axis=1))), s))
-                k0 = 0
-                for k, s in sorted(splits, key=lambda t: t[0]):
-                    items.append(("line", layer, P[k0:k + 1], e.get("net")))
-                    items.append(("part", s["part"], s.get("label", s["part"]), P[k]))
-                    k0 = k
-                items.append(("line", layer, P[k0:], e.get("net")))
-                prev_xy, prev_tag = P[-1], b_tag
+        items, _, _ = _trace_path(cfg, board, c["name"], c["path"], None, None)
         chains[c["name"]] = items
-        print(f"traced {c['name']}: {sum(len(it[2]) for it in items if it[0] == 'line')} centre-line points", flush=True)
+        print(f"traced {c['name']}: {sum(len(it[2]) for it in flat_items(items) if it[0] == 'line')} centre-line "
+              f"points", flush=True)
     return chains, board
+
+
+def _flat_spec(path):
+    for e in path:
+        if "parallel" in e:
+            for br in e["parallel"]:
+                yield from _flat_spec(br)
+        else:
+            yield e
+
+
+def flat_items(items):
+    """Every item of a chain, branches of parallel sections included (in order, branch after branch)."""
+    for it in items:
+        if it[0] == "parallel":
+            for br in it[1]:
+                yield from flat_items(br)
+        else:
+            yield it
+
+
+def _common(A, B, tol):
+    """Number of leading points of polyline A that lie on polyline B (within tol)."""
+    from shapely.geometry import LineString, Point
+
+    lb = LineString(B) if len(B) > 1 else Point(B[0])
+    n = 0
+    for p in A:
+        if lb.distance(Point(p)) > tol:
+            break
+        n += 1
+    return n
+
+
+def _split_parallel(branches, tol=0.02):
+    """(trunk-in line item or None, trimmed branches, trunk-out line item or None): the centre line every branch
+    shares at its start (up to the split junction) and at its end (from the combine junction)."""
+    def end_line(br, k):
+        return br[k] if br and br[k][0] == "line" else None
+
+    out = []
+    for k, rev in ((0, False), (-1, True)):
+        ls = [end_line(b, k) for b in branches]
+        if any(x is None for x in ls) or len({x[1] for x in ls}) > 1:
+            out.append(None)
+            continue
+        P = [np.asarray(x[2], float)[::-1] if rev else np.asarray(x[2], float) for x in ls]
+        n = min(_common(P[0], Q, tol) for Q in P[1:])
+        n = min(n, *[_common(Q, P[0], tol) for Q in P[1:]], *[len(Q) - 1 for Q in P])
+        if n < 2:
+            out.append(None)
+            continue
+        trunk = P[0][:n]
+        for b, Q in zip(branches, P):     # each branch keeps its centre line from the junction on
+            m = _common(Q, trunk, tol)
+            m = max(1, min(m, len(Q) - 1))
+            R = Q[m - 1:]
+            R = np.vstack([trunk[-1], R[1:]])
+            b[k] = ("line", ls[0][1], R[::-1] if rev else R, b[k][3])
+        out.append(("line", ls[0][1], trunk[::-1] if rev else trunk, ls[0][3]))
+    return out[0], branches, out[1]
+
+
+def _trace_path(cfg, board, cname, path, prev_xy, prev_tag):
+    """(items, end xy, end tag) of one path spec, starting where the previous line ended."""
+    items = []
+    for e in path:
+        if "parallel" in e:
+            brs, ends = [], []
+            for b in e["parallel"]:
+                bi, bxy, btag = _trace_path(cfg, board, cname, b, prev_xy, prev_tag)
+                brs.append(bi)
+                ends.append((bxy, btag))
+            if len(brs) < 2:
+                raise ValueError(f"{cname}: a parallel section needs at least two branches")
+            tin, brs, tout = _split_parallel(brs, e.get("tol", 0.02))
+            opts = {k: v for k, v in e.items() if k != "parallel"}
+            opts.setdefault("label", "parallel")
+            if tin is not None:
+                items.append(tin)
+            items.append(("parallel", brs, opts))
+            if tout is not None:
+                items.append(tout)
+            prev_xy, prev_tag = ends[0]
+        elif "part" in e:
+            if e["part"] not in cfg["parts"]:
+                raise ValueError(f"{cname}: part '{e['part']}' not in parts")
+            items.append(("part", e["part"], e.get("label", e["part"]), prev_xy))
+        elif "via" in e:
+            if prev_xy is None:
+                raise ValueError(f"{cname}: a via must follow a line")
+            items.append(("via", prev_xy, dict(e["via"] or {})))
+        elif "line" in e:
+            layer = e["line"]
+            if layer not in cfg["layers"]:
+                raise ValueError(f"{cname}: layer {layer} not in layers")
+            if "points" in e:
+                P = np.asarray(e["points"], float)
+                b_tag = None
+            else:
+                net = e["net"]
+                ca = board.candidates(e["from"], net)
+                if not ca:
+                    raise ValueError(f"{cname}: no '{e['from']}' on net {net}")
+                if len(ca) > 1 and prev_xy is not None:
+                    hit = [x for x in ca if _same(x[0], prev_xy) or (prev_tag and x[1] == prev_tag)]
+                    ca = hit or sorted(ca, key=lambda x: np.linalg.norm(x[0] - prev_xy))
+                elif len(ca) > 1:
+                    raise ValueError(f"{cname}: '{e['from']}' on net {net} is ambiguous ({len(ca)} pins)")
+                a, a_tag = ca[0]
+                cb = [x for x in board.candidates(e["to"], net) if not _same(x[0], a)
+                      and (x[1] is None or x[1] != a_tag or x[1].startswith("via"))]
+                if not cb:
+                    raise ValueError(f"{cname}: no '{e['to']}' on net {net} other than the start")
+                cl = board.centreline(layer, net, a)
+                if len(cb) > 1:
+                    cb = sorted(cb, key=lambda x: cl.length(a, x[0]))
+                b, b_tag = cb[0]
+                P = cl.path(a, b)
+            splits = []
+            for s in e.get("split_at", []):
+                near = s["near"]
+                xy = (np.array([board.by_ref[near]["x"], board.by_ref[near]["y"]])
+                      if isinstance(near, str) else np.asarray(near, float))
+                splits.append((int(np.argmin(np.linalg.norm(P - xy, axis=1))), s))
+            k0 = 0
+            for k, s in sorted(splits, key=lambda t: t[0]):
+                items.append(("line", layer, P[k0:k + 1], e.get("net")))
+                items.append(("part", s["part"], s.get("label", s["part"]), P[k]))
+                k0 = k
+            items.append(("line", layer, P[k0:], e.get("net")))
+            prev_xy, prev_tag = P[-1], b_tag
+        else:
+            raise ValueError(f"{cname}: path element {e} is not a line, part, via or parallel section")
+    return items, prev_xy, prev_tag
 
 
 # --------------------------------------------------------------------------- physics
@@ -458,47 +552,80 @@ def _resample(P, step):
 
 
 def sample(chains, cfg, corner):
-    """Per chain: samples dict(layer, xy, level, stage, dir, ds, s) and the vias / parts with their levels."""
+    """Per chain: samples dict(layer, xy, level, stage, dir, ds, s, branch) and the vias / parts with their levels.
+
+    A parallel section splits the level (split_db, default -10 log10(n branches)), samples every branch from the
+    split on (branch = 1, 2, ... for its samples, 0 outside parallel sections), and combines the branch end levels
+    as an ideal in-phase combiner: out amplitude = sum of branch amplitudes / sqrt(n) (+ combine_db, default 0).
+    The stage count after the section is the largest of the branches'; distances continue from the longest.
+    Loop gains use `victim_level`: a signal coupled into one branch reaches the combined output 20 log10(n) dB below
+    what the level difference says."""
     f = corner["f"]
     out = {}
     for name, items in chains.items():
-        lvl, stage, s0 = 0.0, 0, 0.0
-        lay, xy, lev, stg, dr, dss, ss = [], [], [], [], [], [], []
-        vias, parts, names = [], [], []
-        for it in items:
-            if it[0] == "part":
-                g = part_gain(cfg, it[1], f, corner["t"], corner["states"])
-                lvl += g
-                act = cfg["parts"][it[1]].get("active", False)
-                if act:
-                    stage += 1
-                    names.append(it[2])
-                parts.append(dict(key=it[1], label=it[2], gain=g, level=lvl, s=s0, active=act,
-                                  xy=None if it[3] is None else [float(it[3][0]), float(it[3][1])]))
-                continue
-            if it[0] == "via":
-                lvl -= it[2].get("loss_db", cfg["via_loss_db"])
-                vias.append(dict(xy=np.asarray(it[1], float), level=lvl, stage=stage, s=s0, opts=it[2]))
-                continue
-            L = cfg["layers"][it[1]]
-            loss = L["loss_db_per_mm"] * math.sqrt(f / L["loss_f_ghz"])
-            P, ds = _resample(np.asarray(it[2], float), cfg["step"])
-            d = np.gradient(P, axis=0)
-            d /= np.linalg.norm(d, axis=1)[:, None] + 1e-12
-            k = np.arange(len(P))
-            lay += [it[1]] * len(P)
-            xy.append(P)
-            lev.append(lvl - loss * ds * k)
-            stg += [stage] * len(P)
-            dr.append(d)
-            dss += [ds] * len(P)
-            ss.append(s0 + ds * k)
-            lvl -= loss * ds * (len(P) - 1)
-            s0 += ds * (len(P) - 1)
-        out[name] = dict(layer=np.array(lay), xy=np.vstack(xy), level=np.concatenate(lev), stage=np.array(stg),
-                         dir=np.vstack(dr), ds=np.array(dss), s=np.concatenate(ss), vias=vias, parts=parts,
-                         stage_names=names, end_level=lvl)
+        A = dict(lay=[], xy=[], lev=[], stg=[], dr=[], dss=[], ss=[], br=[], nb=[], vias=[], parts=[], names=[],
+                 nbr=0)
+        lvl, stage, s0 = _sample_items(items, cfg, corner, f, A, 0.0, 0, 0.0, 0, 1)
+        out[name] = dict(layer=np.array(A["lay"]), xy=np.vstack(A["xy"]), level=np.concatenate(A["lev"]),
+                         stage=np.array(A["stg"]), dir=np.vstack(A["dr"]), ds=np.array(A["dss"]),
+                         s=np.concatenate(A["ss"]), branch=np.array(A["br"], int), nb=np.array(A["nb"], int),
+                         vias=A["vias"], parts=A["parts"],
+                         stage_names=A["names"], end_level=lvl)
     return out
+
+
+def _sample_items(items, cfg, corner, f, A, lvl, stage, s0, br, nb):
+    for it in items:
+        if it[0] == "parallel":
+            brs, opts = it[1], it[2]
+            n = len(brs)
+            l0 = lvl + opts.get("split_db", -10 * math.log10(n))
+            ends, names0 = [], list(A["names"])
+            for k, b in enumerate(brs):
+                A["names"] = list(names0)
+                A["nbr"] += 1
+                ends.append(_sample_items(b, cfg, corner, f, A, l0, stage, s0, A["nbr"], n))
+                if k == 0:
+                    names1 = list(A["names"])
+            A["names"] = names1
+            amp = sum(10 ** (e[0] / 20) for e in ends) / math.sqrt(n)
+            lvl = 20 * math.log10(max(amp, 1e-30)) + opts.get("combine_db", 0.0)
+            stage = max(e[1] for e in ends)
+            s0 = max(e[2] for e in ends)
+            continue
+        if it[0] == "part":
+            g = part_gain(cfg, it[1], f, corner["t"], corner["states"])
+            lvl += g
+            act = cfg["parts"][it[1]].get("active", False)
+            if act:
+                stage += 1
+                A["names"].append(it[2])
+            A["parts"].append(dict(key=it[1], label=it[2], gain=g, level=lvl, s=s0, active=act, branch=br,
+                                   xy=None if it[3] is None else [float(it[3][0]), float(it[3][1])]))
+            continue
+        if it[0] == "via":
+            lvl -= it[2].get("loss_db", cfg["via_loss_db"])
+            A["vias"].append(dict(xy=np.asarray(it[1], float), level=lvl, stage=stage, s=s0, opts=it[2], branch=br,
+                                  nb=nb))
+            continue
+        L = cfg["layers"][it[1]]
+        loss = L["loss_db_per_mm"] * math.sqrt(f / L["loss_f_ghz"])
+        P, ds = _resample(np.asarray(it[2], float), cfg["step"])
+        d = np.gradient(P, axis=0)
+        d /= np.linalg.norm(d, axis=1)[:, None] + 1e-12
+        k = np.arange(len(P))
+        A["lay"] += [it[1]] * len(P)
+        A["xy"].append(P)
+        A["lev"].append(lvl - loss * ds * k)
+        A["stg"] += [stage] * len(P)
+        A["dr"].append(d)
+        A["dss"] += [ds] * len(P)
+        A["ss"].append(s0 + ds * k)
+        A["br"] += [br] * len(P)
+        A["nb"] += [nb] * len(P)
+        lvl -= loss * ds * (len(P) - 1)
+        s0 += ds * (len(P) - 1)
+    return lvl, stage, s0
 
 
 def stage_name(names, k):
@@ -521,8 +648,9 @@ def line_line_loops(S, cfg, corner):
             idx = np.nonzero(smp["layer"] == layer)[0]
             if len(idx) < 2:
                 continue
-            XY, lev, stg, D, ds = (smp["xy"][idx], smp["level"][idx], smp["stage"][idx], smp["dir"][idx],
-                                   smp["ds"][idx])
+            XY, lev, stg, D, ds, br = (smp["xy"][idx], smp["level"][idx], smp["stage"][idx], smp["dir"][idx],
+                                       smp["ds"][idx], smp["branch"][idx])
+            corr = 20 * np.log10(smp["nb"][idx])
             beta = beta_mm(f, L["eeff"])
             kL = lambda d: coupling_kL(d, L["h"], L["z0"], L["eeff"])  # noqa: E731
             kc = L["kc_ratio"]
@@ -532,26 +660,30 @@ def line_line_loops(S, cfg, corner):
             for i in range(len(XY)):
                 best = None
                 for j in tree.query_ball_point(XY[i], cfg["dmax"]):
-                    if stg[j] >= stg[i] or lev[i] - lev[j] <= 0:
+                    if stg[j] >= stg[i]:
+                        continue
+                    dgij = lev[i] - lev[j] - (corr[j] if br[j] and br[j] != br[i] else 0.0)
+                    if dgij <= 0:
                         continue
                     dd = float(np.hypot(*(XY[i] - XY[j])))
                     if dd < cfg["dmin"] or abs(D[i] @ D[j]) < cfg["parallel_cos"]:
                         continue
-                    lg = lev[i] - lev[j] + 20 * math.log10(kL(dd))
+                    lg = dgij + 20 * math.log10(kL(dd))
                     if best is None or lg > best[0]:
-                        best = (lg, j, dd)
+                        best = (lg, j, dd, dgij)
                 if best is None:
                     if run:
                         runs.append(run)
                     run = None
                     continue
-                _, j, dd = best
+                _, j, dd, dgij = best
                 k = float(kL(dd))
-                if run and abs(j - run["jlast"]) <= jump and i - run["ilast"] <= 2:
+                if run and abs(j - run["jlast"]) <= jump and i - run["ilast"] <= 2 and \
+                        br[i] == br[run["ilast"]] and br[j] == br[run["jlast"]]:
                     run["sum"] += k * ds[i]
                     run["kmax"] = max(run["kmax"], k)
                     run["dmin"] = min(run["dmin"], dd)
-                    run["dg"] = max(run["dg"], lev[i] - lev[j])
+                    run["dg"] = max(run["dg"], dgij)
                     run["n"] += 1
                     run["jlast"], run["ilast"] = j, i
                     run["agg"].append(int(idx[i]))
@@ -559,8 +691,9 @@ def line_line_loops(S, cfg, corner):
                 else:
                     if run:
                         runs.append(run)
-                    run = dict(sum=k * ds[i], kmax=k, dmin=dd, dg=lev[i] - lev[j], n=1, jlast=j, ilast=i,
-                               agg=[int(idx[i])], vic=[int(idx[j])], stages=(int(stg[j]), int(stg[i])))
+                    run = dict(sum=k * ds[i], kmax=k, dmin=dd, dg=dgij, n=1, jlast=j, ilast=i,
+                               agg=[int(idx[i])], vic=[int(idx[j])], stages=(int(stg[j]), int(stg[i])),
+                               br=(int(br[j]), int(br[i])))
             if run:
                 runs.append(run)
             for r in runs:
@@ -572,8 +705,24 @@ def line_line_loops(S, cfg, corner):
                                  stages=r["stages"], agg=sorted(set(r["agg"])), vic=sorted(set(r["vic"])),
                                  a_xy=smp["xy"][r["agg"][0]].tolist(), v_xy=smp["xy"][r["vic"][0]].tolist(),
                                  note=f"{'forward' if fwd else 'backward'}, {r['n'] * cfg['step']:.1f} mm coupled, "
-                                      f">= {r['dmin']:.2f} mm apart"))
+                                      f">= {r['dmin']:.2f} mm apart" + _branch_note(r["br"])))
     return rows
+
+
+def victim_level(level, branch, nb, agg_branch):
+    """Victim level for the loop gain: a signal coupled into branch k of an n-way parallel section reaches the
+    combined output 20 log10(n) below the level difference (1 / sqrt(n) of the branch amplitude is combined,
+    while the levels already carry the -10 log10(n) split), unless the aggressor is in the same branch."""
+    level, branch, nb = np.asarray(level, float), np.asarray(branch), np.asarray(nb, float)
+    return level + np.where((branch != 0) & (branch != agg_branch), 20 * np.log10(np.maximum(nb, 1)), 0.0)
+
+
+def _branch_note(br):
+    v, a = br
+    if v and a and v != a:
+        return (f"; victim in parallel branch {v}, aggressor in branch {a} (combine -20 log n counted, combiner "
+                f"isolation not)")
+    return f"; in parallel branch {a or v}" if (a or v) else ""
 
 
 def via_loops(S, cfg, corner, fences):
@@ -594,7 +743,8 @@ def via_loops(S, cfg, corner, fences):
             # (1) radiation from the vertical current into upstream lines of each layer it passes
             for layer in opts.get("radiates_into", list(cfg["layers"])):
                 L = cfg["layers"][layer]
-                sel = (smp["layer"] == layer) & (smp["stage"] < V["stage"]) & (smp["level"] < V["level"])
+                vlev = victim_level(smp["level"], smp["branch"], smp["nb"], V["branch"])
+                sel = (smp["layer"] == layer) & (smp["stage"] < V["stage"]) & (vlev < V["level"])
                 gi = np.nonzero(sel)[0]
                 if not len(gi):
                     continue
@@ -619,7 +769,7 @@ def via_loops(S, cfg, corner, fences):
                 if C <= 0:
                     continue
                 strong = gi[np.abs(dV) > 0.1 * np.abs(dV).max()]
-                dg = V["level"] - float(smp["level"][strong].min())
+                dg = V["level"] - float(vlev[strong].min())
                 c = 20 * math.log10(C)
                 j = gi[int(np.argmax(np.abs(dV)))]
                 rows.append(dict(kind="via radiation", ch=ch, layer=layer, loop=dg + c, dg=dg, c=c,
@@ -641,7 +791,7 @@ def via_loops(S, cfg, corner, fences):
                     Tb = fence_transmission(U["xy"], fences[("cavity", cav)], lam, cfg["fence_rmin"], cfg["fence_rmax"])
                     c0 = cavity_coupling(r, f, Cv["eps"], Cv["d"])
                     c = 20 * math.log10(max(c0 * Ta[0] * Tb[0], 1e-30))
-                    dg = V["level"] - U["level"]
+                    dg = V["level"] - float(victim_level(U["level"], U["branch"], U["nb"], V["branch"]))
                     rows.append(dict(kind="via cavity", ch=ch, layer=cav, loop=dg + c, dg=dg, c=c,
                                      stages=(U["stage"], V["stage"]), agg=[], vic=[], a_xy=xy.tolist(),
                                      v_xy=U["xy"].tolist(), via=xy.tolist(), via2=U["xy"].tolist(),
@@ -764,12 +914,13 @@ def display_copper(chains, cfg, board):
 
     out = {}
     for layer in cfg["layers"]:
-        lines = [LineString(it[2]) for items in chains.values() for it in items
+        lines = [LineString(it[2]) for items in chains.values() for it in flat_items(items)
                  if it[0] == "line" and it[1] == layer and len(it[2]) > 1]
         if not lines:
             continue
         zone = shapely.union_all([g.simplify(0.05) for g in lines]).buffer(cfg["display_band"], quad_segs=4)
-        nets = {it[3] for items in chains.values() for it in items if it[0] == "line" and it[1] == layer and it[3]}
+        nets = {it[3] for items in chains.values() for it in flat_items(items)
+                if it[0] == "line" and it[1] == layer and it[3]}
         feats = board.odb.layer_features(layer)
         nf = board.odb.net_features(layer)
         tree_g = shapely.STRtree([zone])
@@ -791,7 +942,7 @@ def page_data(results, cfg, copper):
     layers = list(cfg["layers"])
     smp0 = results[0]["samples"]
     geo = {ch: dict(xy=np.round(s["xy"], 3).ravel().tolist(), layer=[layers.index(x) for x in s["layer"]],
-                    s=np.round(s["s"], 2).tolist(), stage=s["stage"].tolist(),
+                    s=np.round(s["s"], 2).tolist(), stage=s["stage"].tolist(), branch=s["branch"].tolist(),
                     vias=[[round(float(v["xy"][0]), 3), round(float(v["xy"][1]), 3)] for v in s["vias"]],
                     stage_names=s["stage_names"]) for ch, s in smp0.items()}
     corners = []

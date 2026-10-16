@@ -113,3 +113,27 @@ def test_errors(tmp_path):
         osc.trace(_cfg(tmp_path, [{"via": {}}]))
     with pytest.raises(ValueError):
         osc.trace(_cfg(tmp_path, [{"part": "nope"}]))
+
+
+def test_parallel_branches(tmp_path):
+    """A split / combine section (balanced amplifier pair): shared lines kept once, levels split and recombined,
+    loops found into the second branch."""
+    br = lambda y: [{"line": "L1", "points": [[0, 0], [5, 0], [5, y], [15, y]]}, {"part": "amp", "label": "A1"},  # noqa: E731
+                    {"line": "L1", "points": [[15, y], [20, y], [20, 0], [30, 0]]}]
+    path = [{"parallel": [br(3), br(-3)], "label": "pair"},
+            {"line": "L1", "points": [[30, 0], [30, -5], [6, -5]]}]
+    cfg = _cfg(tmp_path, path)
+    chains, _ = osc.trace(cfg)
+    kinds = [it[0] for it in chains["ch1"]]
+    assert kinds == ["line", "parallel", "line", "line"]
+    assert np.allclose(chains["ch1"][0][2], [[0, 0], [5, 0]]) and np.allclose(chains["ch1"][2][2], [[20, 0], [30, 0]])
+    res = osc.assess_all(chains, cfg)
+    S = res[0]["samples"]["ch1"]
+    assert set(S["branch"]) == {0, 1, 2}
+    assert abs(S["end_level"] - 30.0) < 1e-6                     # -3 dB split, +30 dB, ideal in-phase combine
+    assert abs(S["level"][S["branch"] == 2].min() + 10 * np.log10(2)) < 1e-6
+    ll = [r for r in res[0]["rows"] if r["kind"] == "line-line"]
+    into = [r for r in ll if S["branch"][r["vic"][0]] == 2 and S["branch"][r["agg"][0]] == 0]
+    assert into, "no loop into the lower branch, 2 mm from the return"
+    # victim in one branch of two: path gain = 30 dB amp - 3 dB combine of one input (level difference says +33 dB)
+    assert abs(max(r["dg"] for r in into) - (30.0 - 10 * np.log10(2))) < 0.05
