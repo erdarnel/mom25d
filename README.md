@@ -494,6 +494,18 @@ python -m mom25d.oscillation board_osc.json      # -> oscillation.json / .md / .
 Chains are traced along the copper centre lines of an ODB++ export (or given as points). Config, formulas and
 limits: [Engine/docs/oscillation.md](Engine/docs/oscillation.md).
 
+## S-parameter data checks
+
+`mom25d.sparcheck` checks Touchstone files before they go into a cascade or an EM model: passivity, reciprocity,
+amplifier stability (K, mu), sampling, bulk delay, causality (per-term vector fits with and without anti-causal
+poles) and a passive rational model (scikit-rf vector fitting, optional passivity enforcement and SPICE export):
+
+```
+python -m mom25d.sparcheck parts/*.s2p --band 27.5 31 --out checks      # -> sparcheck.md / .html, <name>_check.json
+```
+
+Details: [Engine/docs/sparcheck.md](Engine/docs/sparcheck.md).
+
 ## Ports whose line voltage is not valid
 
 For a strip whose return plane is above it (e.g. the lower outer layer of a

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **New: `mom25d.sparcheck`** — checks of S-parameter data before a cascade or EM model: passivity, reciprocity,
+  amplifier stability, sampling, bulk delay, per-term causality test, vector-fitted rational model (scikit-rf,
+  optional extra `vf`) with model passivity, `--enforce` and `--spice`; JSON, Markdown and a dark-mode page.
+  Docs `Engine/docs/sparcheck.md`; tests `test_sparcheck.py`.
+
 - New: `add_aperture(..., size=)` graded opening meshes; graded meshes checked: max |dS| 0.003 vs uniform on a line section.
 
 - **New: `mom25d.oscillation`** — oscillation risk screen for PCBs with RF gain stages: chains traced along the

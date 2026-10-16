@@ -15,6 +15,7 @@ odb = ["shapely>=2"]
 tri = ["shapely>=2", "triangle"]
 fast = ["numba>=0.60"]
 dxf = ["shapely>=2", "ezdxf"]
+vf = ["scikit-rf>=1.0"]
 
 [tool.setuptools]
 packages = ["mom25d"]
