@@ -52,8 +52,6 @@ th:first-child, td:first-child { text-align: left; font-family: var(--f-body); c
       <div><div class="lbl">Show</div><div id="chk"></div></div>
       <div><div class="row"><span class="lbl">Colour range</span><span class="mono" id="rngv"></span></div>
         <input type="range" id="rng" min="10" max="80" step="5" value="60" aria-label="dB range"></div>
-      <div><div class="row"><span class="lbl">Z exaggeration</span><span class="mono" id="zsv"></span></div>
-        <input type="range" id="zs" min="1" max="10" step="1" value="4" aria-label="Z exaggeration"></div>
       <div><div class="lbl">View</div><div class="seg vgrid" id="views" role="group" aria-label="Camera"></div></div>
       <div><div class="lbl">S-parameters at this frequency (dB, 50 Ω)</div><table id="sp"></table></div>
       <div><div class="lbl">Case</div><div class="mono" id="case"></div></div>
@@ -73,7 +71,8 @@ const RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", 
 const cscale = () => { const r = dark() ? [...RAMP].reverse() : RAMP; return r.map((c, i) => [i / (r.length - 1), c]); };
 $("title").innerHTML = D.title; $("subtitle").innerHTML = D.subtitle;
 $("notes").innerHTML = D.notes.map(n => `<p class="note">${n}</p>`).join("");
-let zs = 4, range = Math.min(60, D.floor);
+const zs = 1;  // true 1:1:1 scale (no z exaggeration)
+let range = Math.min(60, D.floor);
 $("rng").max = D.floor; $("rng").value = range;
 const freqs = [...new Set(D.cases.map(c => c.f))], ports = D.ports_list;
 let fsel = freqs[Math.floor(freqs.length / 2)], psel = ports[0];
@@ -81,6 +80,14 @@ const dec = (s) => { const b = atob(s), a = new Float32Array(b.length); for (let
 const caseOf = () => D.cases.find(c => c.f === fsel && c.port === psel);
 const fams = [...new Set(D.layers.map(L => L.fam))];
 const zmid = (D.zrange[0] + D.zrange[1]) / 2;
+// Mesh-edge lift off a copper face: outward (thick metal: away from its twin sheet), and small next to the thinnest
+// layer spacing so the edges stay on the face (a fixed 4 um floated visibly above 50 um copper).
+const zLev = [...new Set(D.layers.map(L => L.z))].sort((a, b) => a - b);
+const zGap = Math.min(0.2, ...zLev.slice(1).map((z, i) => z - zLev[i]).filter(d => d > 1e-9));
+function wireDz(L) {
+  const tw = D.layers.find(o => o.fam === L.fam && o !== L);
+  return (tw ? (L.z < tw.z ? -1 : 1) : (L.z >= zmid ? 1 : -1)) * Math.min(0.004, 0.01 * zGap);
+}
 const chks = fams.map(f => [`t-${f}`, `${f} copper`, true]).concat([["t-vias", "Via barrels", true]],
   D.planes.map(P => [`t-p-${P.name}`, `Plane ${P.name} current`, false]), [["t-wire", "Mesh edges", false], ["t-ports", "Port labels", true]]);
 $("chk").innerHTML = chks.map(([id, lab, on]) => `<label class="chk"><input type="checkbox" id="${id}" ${on ? "checked" : ""}> ${lab}</label>`).join("");
@@ -107,7 +114,7 @@ function traces() {
   const C = caseOf(), t = [], add = (name, tr) => { (IDX[name] = IDX[name] || []).push(t.length); t.push(tr); };
   for (const L of D.layers) {
     add("cu_" + L.fam, surf(L.name, L.nodes, L.tris, L.z, dec(C.cu[L.name]), C, L.name));
-    const dz = (L.z >= zmid ? 1 : -1) * 0.004;
+    const dz = wireDz(L);
     add("wire_" + L.fam, { type: "scatter3d", mode: "lines", ...edges(L.nodes, L.tris, (L.z + dz) * zs), line: { color: css("--wire"), width: 1 }, hoverinfo: "skip" });
   }
   for (const [name, Wl] of Object.entries(D.walls)) {
@@ -156,11 +163,12 @@ function layout(camera) {
   const ax = (title) => ({ title: { text: title, font: { size: 12, color: css("--muted") } }, color: css("--muted"),
     gridcolor: css("--rule"), zerolinecolor: css("--rule"), showbackground: false, showspikes: false });
   const zr = zspan();
+  const AR = 1.8 / Math.max(W, y1 - y0);  // orthographic zoom: the scene box, not the eye distance, sets it
   return { paper_bgcolor: css("--panel"), font: { color: css("--fg") }, margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, uirevision: "keep",
-    scene: { aspectmode: "manual", aspectratio: { x: 1, y: (y1 - y0) / W, z: zr / W },
+    scene: { aspectmode: "manual", aspectratio: { x: W * AR, y: (y1 - y0) * AR, z: zr * AR },  // one scale on every axis: true 1:1:1
       xaxis: { ...ax("x [mm]"), range: [x0, x1] }, yaxis: { ...ax("y [mm]"), range: [y0, y1] },
-      zaxis: { ...ax(`z ×${zs}`), range: [zmid * zs - zr / 2, zmid * zs + zr / 2], showticklabels: false },
-      camera: camera || cam("iso") } };
+      zaxis: { ...ax("z [mm]"), range: [zmid * zs - zr / 2, zmid * zs + zr / 2] },
+      camera: { ...(camera || cam("iso")), projection: { type: "orthographic" } } } };
 }
 const groups = Object.fromEntries(fams.map(f => [`t-${f}`, ["cu_" + f]]));
 Object.assign(groups, { "t-vias": ["vias"], "t-ports": ["ports"] }, Object.fromEntries(D.planes.map(P => [`t-p-${P.name}`, ["p_" + P.name]])));
@@ -188,14 +196,13 @@ if (typeof Plotly === "undefined") {
 } else {
   seg($("fsel"), freqs, fsel, v => `${v} GHz`, v => { fsel = +v; draw(curCam()); });
   seg($("psel"), ports, psel, v => v, v => { psel = v; draw(curCam()); });
-  $("zsv").textContent = zs + "×"; $("rngv").textContent = range + " dB";
+  $("rngv").textContent = range + " dB";
   draw();
   chks.forEach(([id]) => $(id).onchange = vis);
-  $("zs").oninput = (e) => { zs = +e.target.value; $("zsv").textContent = zs + "×"; draw(curCam()); };
   $("rng").oninput = (e) => { range = +e.target.value; $("rngv").textContent = range + " dB"; draw(curCam()); };
   for (const [v] of views) $("v-" + v).onclick = () => {
     views.forEach(([w]) => $("v-" + w).setAttribute("aria-pressed", String(w === v)));
-    Plotly.relayout("plot", { "scene.camera": cam(v) });
+    Plotly.relayout("plot", { "scene.camera": { ...cam(v), projection: { type: "orthographic" } } });
   };
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => draw(curCam()));
 }

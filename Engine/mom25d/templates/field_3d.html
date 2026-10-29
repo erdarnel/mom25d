@@ -57,8 +57,6 @@ aside { background: var(--panel); border: 1px solid var(--rule); border-radius: 
       <div><div class="lbl">Show (3D)</div><div id="chk"></div></div>
       <div><div class="row"><span class="lbl">Colour range</span><span class="mono" id="rngv"></span></div>
         <input type="range" id="rng" min="10" max="80" step="5" value="60" aria-label="dB range"></div>
-      <div><div class="row"><span class="lbl">Z exaggeration</span><span class="mono" id="zsv"></span></div>
-        <input type="range" id="zs" min="1" max="10" step="1" value="4" aria-label="Z exaggeration"></div>
       <div><div class="lbl">Case</div><div class="mono" id="case"></div></div>
       <div id="notes"></div>
       <p class="note" id="err" hidden></p>
@@ -78,7 +76,9 @@ const cscale = () => { const r = dark() ? [...RAMP].reverse() : RAMP; return r.m
 $("title").innerHTML = D.title; $("subtitle").innerHTML = D.subtitle;
 $("notes").innerHTML = D.notes.map(n => `<p class="note">${n}</p>`).join("");
 const G = D.grid, NX = G.x.length, NY = G.y.length, NZ = G.z.length;
-let zs = 4, range = Math.min(60, D.floor), axis = "z", pos = 0;
+const zs = 1;  // true 1:1:1 scale (no z exaggeration)
+const ZCUT = 4;  // z stretch of the 2-D x / y cut panels only (a board is too thin to read at 1:1)
+let range = Math.min(60, D.floor), axis = "z", pos = 0;
 $("rng").max = D.floor; $("rng").value = range;
 const freqs = [...new Set(D.cases.map(c => c.f))], ports = D.ports_list;
 let fsel = freqs[Math.floor(freqs.length / 2)], psel = ports[0];
@@ -139,11 +139,12 @@ function layout3d(camera) {
   const ax = (title) => ({ title: { text: title, font: { size: 12, color: css("--muted") } }, color: css("--muted"),
     gridcolor: css("--rule"), zerolinecolor: css("--rule"), showbackground: false, showspikes: false });
   const zr = (zhi - zlo) * zs, zc = (zhi + zlo) / 2 * zs;
+  const AR = 1.8 / Math.max(W, y1 - y0);  // orthographic zoom: the scene box, not the eye distance, sets it
   return { paper_bgcolor: css("--panel"), font: { color: css("--fg") }, margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, uirevision: "keep",
-    scene: { aspectmode: "manual", aspectratio: { x: 1, y: (y1 - y0) / W, z: zr / W },
+    scene: { aspectmode: "manual", aspectratio: { x: W * AR, y: (y1 - y0) * AR, z: 1.2 * zr * AR },  // one scale on every axis: true 1:1:1
       xaxis: { ...ax("x [mm]"), range: [x0, x1] }, yaxis: { ...ax("y [mm]"), range: [y0, y1] },
-      zaxis: { ...ax(`z ×${zs}`), range: [zc - zr * 0.6, zc + zr * 0.6], showticklabels: false },
-      camera: camera || { eye: { x: -0.55, y: -0.95, z: 0.6 }, center: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } } } };
+      zaxis: { ...ax("z [mm]"), range: [zc - zr * 0.6, zc + zr * 0.6] },
+      camera: { ...(camera || { eye: { x: -0.55, y: -0.95, z: 0.6 }, center: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } }), projection: { type: "orthographic" } } } };
 }
 function draw2d() {
   const { C } = vol(), S = slice();
@@ -165,7 +166,7 @@ function draw2d() {
   const lay = { paper_bgcolor: css("--panel"), plot_bgcolor: css("--panel"), font: { color: css("--fg") }, margin: { l: 60, r: 10, t: 30, b: 50 }, showlegend: false,
     title: { text: `|E|, ${axis} = ${coord().toFixed(3)} mm`, font: { size: 13 } },
     xaxis: { ...ax(S.lu), range: [S.u[0], S.u[S.u.length - 1]] },
-    yaxis: { ...ax(axis === "z" ? S.lv : `${S.lv} (×${zs})`), range: [S.v[0], S.v[S.v.length - 1]], scaleanchor: "x", scaleratio: axis === "z" ? 1 : zs } };
+    yaxis: { ...ax(axis === "z" ? S.lv : `${S.lv} (×${ZCUT})`), range: [S.v[0], S.v[S.v.length - 1]], scaleanchor: "x", scaleratio: axis === "z" ? 1 : ZCUT } };
   Plotly.react("p2d", t, lay, { responsive: true, displaylogo: false });
 }
 const groups = Object.fromEntries(fams.map(f => [`t-${f}`, ["e_" + f]]));
@@ -206,12 +207,11 @@ if (typeof Plotly === "undefined") {
   seg($("fsel"), freqs, fsel, v => `${v} GHz`, v => { fsel = +v; draw(curCam()); });
   seg($("psel"), ports, psel, v => v, v => { psel = v; draw(curCam()); });
   document.querySelectorAll("#axsel button").forEach(b => b.onclick = () => { setAxis(b.dataset.v); draw(curCam()); });
-  $("zsv").textContent = zs + "×"; $("rngv").textContent = range + " dB";
+  $("rngv").textContent = range + " dB";
   setAxis("z"); draw();
   chks.forEach(([id]) => $(id).onchange = vis);
   let pend = null;
   $("pos").oninput = (e) => { pos = +e.target.value; info(); if (pend) cancelAnimationFrame(pend); pend = requestAnimationFrame(() => draw(curCam())); };
-  $("zs").oninput = (e) => { zs = +e.target.value; $("zsv").textContent = zs + "×"; draw(curCam()); };
   $("rng").oninput = (e) => { range = +e.target.value; $("rngv").textContent = range + " dB"; draw(curCam()); };
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => draw(curCam()));
 }

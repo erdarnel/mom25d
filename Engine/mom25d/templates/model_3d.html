@@ -51,8 +51,6 @@ td { padding: 1px 3px; vertical-align: top; overflow-wrap: anywhere; } td.m { fo
     <div id="plot" role="img" aria-label="3D view of the model"></div>
     <aside>
       <div><div class="lbl">Show</div><div id="chk"></div></div>
-      <div><div class="row"><span class="lbl">Z exaggeration</span><span id="zsv" style="font-family:var(--f-mono)"></span></div>
-        <input type="range" id="zs" min="1" max="10" step="1" value="4" aria-label="Z exaggeration"></div>
       <div><div class="lbl">View</div><div class="seg" id="views" role="group" aria-label="Camera"></div></div>
       <div><div class="lbl">Unknowns</div><dl id="stats"></dl></div>
       <div><div class="lbl">Ports / parts</div><table id="ports"></table></div>
@@ -68,7 +66,7 @@ td { padding: 1px 3px; vertical-align: top; overflow-wrap: anywhere; } td.m { fo
 const D = __DATA__;
 const $ = (id) => document.getElementById(id);
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-let zs = 4;
+const zs = 1;  // true 1:1:1 scale (no z exaggeration)
 $("title").innerHTML = D.title; $("subtitle").innerHTML = D.subtitle;
 $("notes").innerHTML = D.notes.map(n => `<p class="note">${n}</p>`).join("");
 const S = D.stats;
@@ -87,6 +85,14 @@ const fams = [...new Set(D.layers.map(L => L.fam))];
 const famColor = Object.fromEntries(D.layers.map(L => [L.fam, L.color]));
 const famZ = Object.fromEntries(D.layers.filter(L => L.name === L.fam).map(L => [L.fam, L.z]));
 const zmid = (D.zrange[0] + D.zrange[1]) / 2;
+// Mesh-edge lift off a copper face: outward (thick metal: away from its twin sheet), and small next to the thinnest
+// layer spacing so the edges stay on the face (a fixed 4 um floated visibly above 50 um copper).
+const zLev = [...new Set(D.layers.map(L => L.z))].sort((a, b) => a - b);
+const zGap = Math.min(0.2, ...zLev.slice(1).map((z, i) => z - zLev[i]).filter(d => d > 1e-9));
+function wireDz(L) {
+  const tw = D.layers.find(o => o.fam === L.fam && o !== L);
+  return (tw ? (L.z < tw.z ? -1 : 1) : (L.z >= zmid ? 1 : -1)) * Math.min(0.004, 0.01 * zGap);
+}
 const pz = D.planes.map(P => P.z), outer = new Set(D.planes.filter(P => P.z === Math.min(...pz) || P.z === Math.max(...pz)).map(P => P.name));
 const chks = fams.map(f => [`t-${f}`, `${f} copper`, true]).concat([["t-wire", "Mesh edges", false],
   ["t-planes", `Planes ${[...outer].join(", ")} (outer)`, true], ["t-inner", "Inner planes", false],
@@ -147,7 +153,7 @@ function traces() {
   for (const L of D.layers) {
     add("cu_" + L.fam, mesh(L.nodes, L.tris, L.z, { color: L.color, opacity: 1, lighting: { ambient: 0.95, diffuse: 0.2 },
       hovertemplate: `${L.name}<br>x %{x:.3f}<br>y %{y:.3f} mm<extra></extra>` }));
-    const dz = (L.z >= zmid ? 1 : -1) * 0.004;
+    const dz = wireDz(L);
     add("wire_" + L.fam, { type: "scatter3d", mode: "lines", ...edges(L.nodes, L.tris, (L.z + dz) * zs), line: { color: css("--wire"), width: 1 }, hoverinfo: "skip" });
   }
   for (const [name, Wl] of Object.entries(D.walls)) add("cu_" + name, { ...walls(Wl), color: Wl.color, opacity: 1, lighting: { ambient: 0.6, diffuse: 0.6 }, hovertemplate: `${name} side wall<extra></extra>` });
@@ -187,11 +193,12 @@ function layout(camera) {
   const ax = (title) => ({ title: { text: title, font: { size: 12, color: css("--muted") } }, color: css("--muted"),
     gridcolor: css("--rule"), zerolinecolor: css("--rule"), showbackground: false, showspikes: false });
   const zr = zspan();
+  const AR = 1.8 / Math.max(W, y1 - y0);  // orthographic zoom: the scene box, not the eye distance, sets it
   return { paper_bgcolor: css("--panel"), font: { color: css("--fg") }, margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, uirevision: "keep",
-    scene: { aspectmode: "manual", aspectratio: { x: 1, y: (y1 - y0) / W, z: zr / W },
+    scene: { aspectmode: "manual", aspectratio: { x: W * AR, y: (y1 - y0) * AR, z: zr * AR },  // one scale on every axis: true 1:1:1
       xaxis: { ...ax("x [mm]"), range: [x0, x1] }, yaxis: { ...ax("y [mm]"), range: [y0, y1] },
-      zaxis: { ...ax(`z ×${zs}`), range: [zmid * zs - zr / 2, zmid * zs + zr / 2], showticklabels: false },
-      camera: camera || cam("iso") } };
+      zaxis: { ...ax("z [mm]"), range: [zmid * zs - zr / 2, zmid * zs + zr / 2] },
+      camera: { ...(camera || cam("iso")), projection: { type: "orthographic" } } } };
 }
 const groups = Object.fromEntries(fams.map(f => [`t-${f}`, ["cu_" + f]]));
 Object.assign(groups, { "t-planes": ["planes"], "t-inner": ["inner"], "t-board": ["board"], "t-vias": ["vias"], "t-ports": ["ports"] });
@@ -206,12 +213,11 @@ $("views").innerHTML = views.map(([v, lab], i) => `<button id="v-${v}" aria-pres
 if (typeof Plotly === "undefined") {
   $("err").hidden = false; $("err").textContent = "Plotly did not load (cdn.jsdelivr.net blocked?). Reload to try again.";
 } else {
-  $("zsv").textContent = zs + "×"; draw();
+  draw();
   chks.forEach(([id]) => $(id).onchange = vis);
-  $("zs").oninput = (e) => { zs = +e.target.value; $("zsv").textContent = zs + "×"; draw(curCam()); };
   for (const [v] of views) $("v-" + v).onclick = () => {
     views.forEach(([w]) => $("v-" + w).setAttribute("aria-pressed", String(w === v)));
-    Plotly.relayout("plot", { "scene.camera": cam(v) });
+    Plotly.relayout("plot", { "scene.camera": { ...cam(v), projection: { type: "orthographic" } } });
   };
 }
 </script>
