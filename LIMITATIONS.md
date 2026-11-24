@@ -24,6 +24,7 @@ result assumes anyway (infinite layers, PEC ground, sheet copper, ...) is in [AS
 | Line voltage invalid where the strip's return is the plane **above** (flipped boards, dummy grounds) (D28) | Z0 drifting with f, eps_eff biased 3-4 % | `Solver(v_weight=0)` (window >~ lambda_g/2), `Port(z0_from="reciprocity")` |
 | **Feed-only** models with plane apertures: Z0 from the line voltage is wrong (D33) | Z0 ~ half the expected value | Z0 from an internal port (reciprocity) or `Solver(z0=)`; gamma is fine |
 | Two pad ports closer than two pad depths | Overlapping pads (shorted ports) | One shared stitched pad for both (mom25d.rfpcb does it) |
+| Feed **fit margin** 4 h measured to the z = 0 ground: with a dummy ground far below a bottom-referenced line (2026-11-24) | "feed line too short or mesh too coarse (0 sample cuts ...)" | `Port(margin=)` from the line's own reference plane; `Solver(v_weight=0)` |
 | No **differential / multimode** ports | — | Single-ended ports + post-processing |
 | Delta-gap feeds make a closed resonator; raw currents on unexcited feeds ring (D8) | Unphysical currents on feeds | Plot `matched_currents` / `wave_currents`; ignore feed sections beyond the gaps |
 
@@ -51,6 +52,7 @@ result assumes anyway (infinite layers, PEC ground, sheet copper, ...) is in [AS
 | Limitation | Symptom | Do instead / check |
 |---|---|---|
 | Quasi-static barrel (D15, scaling notes): OK while k1 h is small (~0.3 per 0.254 mm layer at 31 GHz); long through-vias are not full-wave | Via inductance / resonance error at mm-wave on tall vias | Keep via spans short or cross-check in openEMS |
+| A **signal via through a stack of plane openings** (D36: one quasi-static piece over its whole span, image in the plane below, coupled only to other open segments) does not see the coax return of a ground-via cage around it | 2026-10-16, 12-layer board: 1.9 mm L1-L12 via through 1.2 mm openings in ten planes, six-via cage at 0.9 mm, dummy PEC 2 mm below L12: S21 -3.9 to -8.8 dB, S11 -2.6 to -0.9 dB at 17-22 GHz (passive, reciprocal, S11 = S22), i.e. ~1 nH of series inductance where a ~54 ohm coax is expected | Split the model at the outer planes (top / bottom models joined by via ports) and model the caged via as a coax section or in a 3-D solver; validated only for short pad vias over one opening (D36) |
 | A via must attach to the cells **on both sides** if centred on a grid line (D15) | S11 != S22 by ~10 deg on a symmetric layout | `kind="tri"` or off-grid via centres |
 | **Antipads are experimental** (D22) | Plate coupling errors with one frill ring | Use >= the default rings; validate |
 | Without an inner plane in the stack, vias that end on an inner foil go to the ground plane | Wrong return path | Add the plane |
