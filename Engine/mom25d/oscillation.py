@@ -476,13 +476,20 @@ def part_gain(cfg, key, f_ghz, t, states=None):
         st = (states or {}).get(key, spec.get("state"))
         g = spec["states"][st] if st is not None else max(spec["states"].values())
     elif "s2p" in spec:
+        # one file, or {"<degC>": file, ...}: |S21| per temperature, linear in t between files (no tc on top then)
+        files = spec["s2p"] if isinstance(spec["s2p"], dict) else {str(cfg["t_ref"]): spec["s2p"]}
         cache = spec.setdefault("_s21", {})
-        if "f" not in cache:
+        if not cache:
             from .rfpcb.circuit import read_touchstone
 
-            f, S, _ = read_touchstone(cfg.path(spec["s2p"]))
-            cache["f"], cache["g"] = f / 1e9, 20 * np.log10(np.abs(S[1, 0]) + 1e-30)
-        g = float(np.interp(f_ghz, cache["f"], cache["g"]))
+            for tk, fn in files.items():
+                f, S, _ = read_touchstone(cfg.path(fn))
+                cache[float(tk)] = (f / 1e9, 20 * np.log10(np.abs(S[1, 0]) + 1e-30))
+        ts = sorted(cache)
+        gs = [float(np.interp(f_ghz, *cache[tk])) for tk in ts]
+        g = float(np.interp(t, ts, gs)) if len(ts) > 1 else gs[0]
+        if len(ts) > 1:
+            return g
     elif "gain_vs_f" in spec:
         t_ = np.asarray(spec["gain_vs_f"], float)
         g = float(np.interp(f_ghz, t_[:, 0], t_[:, 1]))
