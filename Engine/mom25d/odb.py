@@ -38,7 +38,7 @@ from .mesh import _DIRS, CoplanarGround, Layout
 ARC_SEG_DEG = 10.0
 MM = 1e-3
 OZ_MM = 0.0348  # copper thickness per oz/ft^2 [mm]
-CACHE_VERSION = 2  # bump whenever parsing changes, so stale layer caches are ignored
+CACHE_VERSION = 3  # bump whenever parsing changes, so stale layer caches are ignored
 
 
 def _lines(path):
@@ -443,7 +443,7 @@ class ODB:
     def _surface(contours):
         """Surface from island (I) / hole (H) contours. Exporters (Altium) do
         not always list a hole right after its island, so each hole is
-        assigned to the smallest island that contains it."""
+        cut from every island that contains it (not from islands inside it)."""
 
         def poly(pts):
             p = Polygon(pts)
@@ -453,16 +453,20 @@ class ODB:
         if not islands:
             return None
         holes = [poly(pts) for isl, pts in contours if not isl]
-        area = np.array([p.area for p in islands])
         tree = shapely.STRtree(islands)
         per = [[] for _ in islands]
         for h in holes:
             if h.is_empty:
                 continue
             rp = h.representative_point()
-            cand = [i for i in tree.query(rp) if islands[i].contains(rp)]
-            if cand:
-                per[min(cand, key=lambda i: area[i])].append(h)
+            # every island that contains the hole, except islands lying inside it (a pad in its own void). Giving
+            # the hole only to the smallest containing island lost voids where islands overlap: a 3.44 mm antipad
+            # on an inner plane went to a 4 131 mm^2 island while the 67 708 mm^2 plane under it stayed solid
+            # (2026-11-26, Xpedition export)
+            hb = h.buffer(1e-6)
+            for i in tree.query(rp):
+                if islands[i].contains(rp) and not hb.contains(islands[i]):
+                    per[i].append(h)
         out = [isl.difference(shapely.union_all(hs)) if hs else isl for isl, hs in zip(islands, per)]
         return shapely.union_all(out)
 
