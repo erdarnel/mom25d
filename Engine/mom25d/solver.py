@@ -6,6 +6,28 @@ from dataclasses import dataclass
 
 import numpy as np
 import scipy.linalg as sla
+
+
+def _dense_solve(Z, B):
+    """Z X = B for the dense solve. scipy's LAPACK is LP64 (32-bit indices) in the standard wheels: from
+    2 N^2 >= 2^31 (N >= ~32.8 k, counting the complex matrix as doubles) its LU overwrote memory and the process
+    died with an access violation (N 44 431 and 51 734 on a Windows station, 2026-11-25). Above that size use
+    numpy's LAPACK when it is ILP64 (numpy >= 2 wheels: scipy-openblas64), which holds one more N x N copy."""
+    n = Z.shape[0]
+    if 2 * n * n >= 2 ** 31 - 1:
+        if not _numpy_ilp64():
+            raise MemoryError(f"N = {n}: too large for an LP64 LAPACK and numpy's LAPACK is not ILP64; "
+                              "use method='hmatrix' or a smaller model")
+        return np.linalg.solve(Z, B)
+    return sla.lu_solve(sla.lu_factor(Z, overwrite_a=True, check_finite=False), B)
+
+
+def _numpy_ilp64():
+    try:
+        lap = np.show_config(mode="dicts")["Build Dependencies"]["lapack"]
+        return "USE64BITINT" in str(lap.get("openblas configuration", "")) or "openblas64" in str(lap).lower()
+    except Exception:  # noqa: BLE001
+        return False
 import scipy.sparse as sp
 from scipy.optimize import minimize, minimize_scalar
 from scipy.special import hankel2, kv
@@ -993,11 +1015,10 @@ class Solver:
         t2 = time.time()
         if self.Lm is not None:  # also solve for the lumped gaps, then load them
             ne = excitations.shape[1]
-            X = sla.lu_solve(sla.lu_factor(Z, overwrite_a=True, check_finite=False),
-                             np.hstack([excitations, self.Lm]))
+            X = _dense_solve(Z, np.hstack([excitations, self.Lm]))
             x = self._load_lumped(X[:, :ne], X[:, ne:], freq)
         else:
-            x = sla.lu_solve(sla.lu_factor(Z, overwrite_a=True, check_finite=False), excitations)
+            x = _dense_solve(Z, excitations)
         if self.verbose:
             nv = f" ({self.mesh.n_vias} via segments)" if self.mesh.n_vias else ""
             print(f"  f = {freq / 1e9:8.4f} GHz  N = {self.mesh.n_unknowns}{nv}  "

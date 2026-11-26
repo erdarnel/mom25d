@@ -73,6 +73,11 @@ result assumes anyway (infinite layers, PEC ground, sheet copper, ...) is in [AS
   frequency, the per-port GMRES solves dominate. GMRES needs more iterations at low frequency.
 - `Solver(method="auto")` may pick the H-matrix; `memory_estimate()` then returns None (use `method="dense"` to get it).
 - `FreqInterp` stores dense matrices and is off for H-matrix and aperture models.
+- Dense solves above N ~ 32.8 k (2 N² >= 2^31): scipy's standard wheels have an LP64 LAPACK (32-bit indices), whose
+  LU overwrote memory: the process died with an access violation (0xC0000005) and no traceback, at N = 44 431 and
+  51 734 on a Windows station (2026-11-25). The solver now uses numpy's LAPACK above that size when it is ILP64
+  (numpy >= 2 wheels, scipy-openblas64) and otherwise raises MemoryError. Check: `np.show_config()` lists
+  USE64BITINT for numpy's LAPACK.
 - Whole boards (1e7-1e8 unknowns): do not solve whole — cut into windows, cascade (scaling notes in CLAUDE.md).
 
 ## Losses and materials
