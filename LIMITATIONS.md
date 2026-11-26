@@ -78,6 +78,11 @@ result assumes anyway (infinite layers, PEC ground, sheet copper, ...) is in [AS
   51 734 on a Windows station (2026-11-25). The solver now uses numpy's LAPACK above that size when it is ILP64
   (numpy >= 2 wheels, scipy-openblas64) and otherwise raises MemoryError. Check: `np.show_config()` lists
   USE64BITINT for numpy's LAPACK.
+- That ILP64 path copies Z once more: 4 x 16 N² bytes, not 3 (51 734 unknowns: 171 GB). Two station runs sized at
+  3 x 16 N² hit their job memory caps (2026-11-26) and died with an access violation, not a MemoryError, because the
+  failed allocation was in C code. `memory_estimate()` now counts 4 there; size remote memory caps from it plus ~5 %.
+  The solve prints a 'dense solve: N ..., numpy ILP64' line just before it starts. On Windows the free-memory check
+  read a fixed 8 GB (no /proc/meminfo); it now asks GlobalMemoryStatusEx.
 - Whole boards (1e7-1e8 unknowns): do not solve whole — cut into windows, cascade (scaling notes in CLAUDE.md).
 
 ## Losses and materials

@@ -16,6 +16,7 @@ fit in about half the available memory; complex64 (N = 8980: 0.65 GB each)
 costs ~5e-5 in S at low frequency, where the charge term dominates Z.
 """
 
+import sys
 import time
 
 import numpy as np
@@ -177,6 +178,21 @@ def _available_memory():
                     return int(line.split()[1]) * 1024
     except OSError:
         pass
+    if sys.platform == "win32":          # no /proc on Windows: GlobalMemoryStatusEx (2026-11-26; was a fixed 8 GB)
+        try:
+            import ctypes
+
+            class _MS(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            m = _MS(); m.dwLength = ctypes.sizeof(_MS)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+                return int(m.ullAvailPhys)
+        except Exception:  # noqa: BLE001
+            pass
     return 8e9
 
 

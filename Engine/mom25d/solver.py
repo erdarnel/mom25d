@@ -18,6 +18,7 @@ def _dense_solve(Z, B):
         if not _numpy_ilp64():
             raise MemoryError(f"N = {n}: too large for an LP64 LAPACK and numpy's LAPACK is not ILP64; "
                               "use method='hmatrix' or a smaller model")
+        print(f"dense solve: N {n}, numpy ILP64 LAPACK (one extra N x N copy, {16 * n * n / 1e9:.1f} GB)", flush=True)
         return np.linalg.solve(Z, B)
     return sla.lu_solve(sla.lu_factor(Z, overwrite_a=True, check_finite=False), B)
 
@@ -1135,13 +1136,15 @@ class Solver:
 
     def memory_estimate(self, interp=None):
         """Peak memory [bytes] of a dense sweep: Z, its LU and a fill
-        workspace (3 N x N complex128), plus the FreqInterp anchors kept at
+        workspace (3 N x N complex128; 4 above N ~32.8 k, see _dense_solve), plus the FreqInterp anchors kept at
         once (order + 1 of them, complex128 or complex64). None for the
         H-matrix method (its memory depends on the compression)."""
         if self.method == "hmatrix":
             return None
         n = int(self.mesh.n_unknowns)
-        need = 3 * 16 * n * n
+        # above 2 N^2 >= 2^31 the solve goes through numpy's ILP64 LAPACK, which copies Z once more (_dense_solve):
+        # 4 N x N. Counting 3 there let two station runs (N 44 k / 52 k) exceed their job memory caps, 2026-11-26
+        need = (4 if 2 * n * n >= 2 ** 31 - 1 else 3) * 16 * n * n
         if interp is not None:
             item = np.dtype(interp.dtype or np.complex128).itemsize
             need += (interp.order + 1) * item * n * n
